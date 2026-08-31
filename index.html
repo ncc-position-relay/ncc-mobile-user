@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0d1720">
+  <title>NCC XR Mobile User</title>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;background:#0d1720;color:#eef5ff;font-family:Tahoma,Arial,sans-serif;padding:14px}
+    main{max-width:760px;margin:auto}
+    .card{background:#162330;border:1px solid #2d4052;border-radius:12px;padding:14px;margin-bottom:12px}
+    h1{font-size:22px;margin:0 0 8px} h2{font-size:17px;margin:0 0 10px}
+    .muted{color:#aab8c5;font-size:13px}.ok{color:#77e39b}.bad{color:#ff8585}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    @media(max-width:620px){.grid{grid-template-columns:1fr}}
+    label{display:block;font-size:13px;margin-bottom:5px}
+    input,select,button{width:100%;min-height:44px;border-radius:8px;border:1px solid #536b80;font-size:15px}
+    input,select{background:#0b151e;color:#fff;padding:8px 10px}
+    button{padding:8px 10px;background:#273b4e;color:#fff;font-weight:700;cursor:pointer}
+    button.primary{background:#1769aa}.danger{background:#8e2932}
+    button:disabled{opacity:.45;cursor:default}
+    .row{display:grid;grid-template-columns:140px 1fr;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+    .ltr{direction:ltr;text-align:left;font-family:Consolas,monospace}
+    #log{direction:ltr;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;max-height:250px;overflow-y:auto;background:#081018;border-radius:8px;padding:9px;font:12px Consolas,monospace}
+    .avatarBox{display:flex;gap:12px;align-items:center;background:#0b151e;border-radius:10px;padding:12px}
+    .avatarIcon{width:74px;height:110px;border:2px solid #5b83aa;border-radius:38px 38px 14px 14px;display:flex;align-items:center;justify-content:center;font-size:42px}
+    code{direction:ltr;display:inline-block}
+  </style>
+</head>
+<body>
+<main>
+  <section class="card">
+    <h1>NCC XR — Mobile User</h1>
+    <div id="secureStatus"></div>
+    <div class="muted">Web App مستقل پروژه NCC — بدون نیاز به نصب اپلیکیشن</div>
+  </section>
+
+  <section class="card">
+    <h2>اتصال به جلسه</h2>
+    <label>Session Code</label>
+    <input id="sessionCode" placeholder="کد جلسه را از اپراتور NCC دریافت کنید">
+    <div class="muted" style="margin-top:6px">این کد مسیر خصوصیِ آزمایشی ارسال داده است؛ آن را عمومی نکنید.</div>
+  </section>
+
+  <section class="card">
+    <h2>مشخصات کاربر</h2>
+    <div class="grid">
+      <div><label>User ID</label><input id="userId" value="PHONE_001"></div>
+      <div><label>نام کاربر</label><input id="label" value="User 1"></div>
+      <div><label>قد (cm)</label><input id="heightCm" type="number" min="100" max="230" value="175"></div>
+      <div><label>وزن (kg)</label><input id="weightKg" type="number" min="30" max="250" value="75"></div>
+      <div>
+        <label>Role</label>
+        <select id="role">
+          <option value="visitor">Visitor</option>
+          <option value="staff">Staff</option>
+          <option value="responder">Responder</option>
+          <option value="commander">Commander</option>
+        </select>
+      </div>
+      <div>
+        <label>طبقه</label>
+        <select id="floorId">
+          <option value="">Outdoor</option>
+          <option value="F00">F00</option>
+          <option value="F01">F01</option>
+          <option value="F02">F02</option>
+          <option value="F03">F03</option>
+        </select>
+      </div>
+      <div>
+        <label>Avatar</label>
+        <select id="avatarId">
+          <option value="avatar_male_01">avatar_male_01.glb</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="avatarBox" style="margin-top:12px">
+      <div class="avatarIcon">👤</div>
+      <div>
+        <b id="avatarLabel">avatar_male_01.glb</b><br>
+        <span class="muted">مدل سه‌بعدی واقعی در سامانه کامپیوتر با همین Avatar ID بارگذاری می‌شود.</span><br>
+        <span id="heightPreview">Target height: 175 cm</span>
+      </div>
+    </div>
+
+    <button id="saveProfile" style="margin-top:10px">ذخیره مشخصات روی گوشی</button>
+  </section>
+
+  <section class="card">
+    <h2>GPS</h2>
+    <div class="row"><span>Latitude</span><span id="lat" class="ltr">-</span></div>
+    <div class="row"><span>Longitude</span><span id="lon" class="ltr">-</span></div>
+    <div class="row"><span>Accuracy</span><span id="accuracy" class="ltr">-</span></div>
+    <div class="row"><span>Altitude</span><span id="altitude" class="ltr">-</span></div>
+    <div class="row"><span>Speed</span><span id="speed" class="ltr">-</span></div>
+    <div class="row"><span>Heading</span><span id="heading" class="ltr">-</span></div>
+    <div class="row"><span>Last Send</span><span id="lastSend" class="ltr">-</span></div>
+
+    <div class="grid" style="margin-top:12px">
+      <button id="enableGps">فعال‌کردن GPS</button>
+      <button id="sendOnce" class="primary" disabled>ارسال یک موقعیت</button>
+      <button id="startLive" class="primary" disabled>شروع ارسال زنده</button>
+      <button id="stopLive" class="danger" disabled>توقف ارسال زنده</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>وضعیت ارسال</h2>
+    <div id="relayStatus">Relay: آماده تست</div>
+    <div id="log"></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const NTFY_BASE = 'https://ntfy.sh';
+const LIVE_INTERVAL_MS = 1000;
+
+let watchId = null;
+let lastPosition = null;
+let liveEnabled = false;
+let lastSentAt = 0;
+
+function log(text) {
+  const t = new Date().toLocaleTimeString();
+  $('log').textContent = `[${t}] ${text}\n` + $('log').textContent;
+}
+
+function cleanTopic(value) {
+  return value.trim().replace(/[^A-Za-z0-9_-]/g, '');
+}
+
+function profile() {
+  return {
+    user_id: $('userId').value.trim() || 'PHONE_001',
+    label: $('label').value.trim() || 'Mobile User',
+    avatar_id: $('avatarId').value,
+    height_cm: Number($('heightCm').value) || 175,
+    weight_kg: Number($('weightKg').value) || null,
+    role: $('role').value,
+    floor_id: $('floorId').value || null
+  };
+}
+
+function saveProfile() {
+  const data = {...profile(), session_code: $('sessionCode').value.trim()};
+  localStorage.setItem('ncc_mobile_profile_v1', JSON.stringify(data));
+  log('PROFILE SAVED');
+}
+
+function loadProfile() {
+  try {
+    const data = JSON.parse(localStorage.getItem('ncc_mobile_profile_v1') || 'null');
+    if (!data) return;
+    $('userId').value = data.user_id ?? 'PHONE_001';
+    $('label').value = data.label ?? 'User 1';
+    $('avatarId').value = data.avatar_id ?? 'avatar_male_01';
+    $('heightCm').value = data.height_cm ?? 175;
+    $('weightKg').value = data.weight_kg ?? 75;
+    $('role').value = data.role ?? 'visitor';
+    $('floorId').value = data.floor_id ?? '';
+    $('sessionCode').value = data.session_code ?? '';
+  } catch (_) {}
+  updateAvatarPreview();
+}
+
+function updateAvatarPreview() {
+  $('avatarLabel').textContent = `${$('avatarId').value}.glb`;
+  $('heightPreview').textContent = `Target height: ${Number($('heightCm').value) || 175} cm`;
+}
+
+function finiteOrNull(v) {
+  return Number.isFinite(v) ? v : null;
+}
+
+function showPosition(pos) {
+  const c = pos.coords;
+  $('lat').textContent = c.latitude.toFixed(8);
+  $('lon').textContent = c.longitude.toFixed(8);
+  $('accuracy').textContent = `${c.accuracy.toFixed(1)} m`;
+  $('altitude').textContent = c.altitude == null ? '-' : `${c.altitude.toFixed(1)} m`;
+  $('speed').textContent = c.speed == null ? '-' : `${c.speed.toFixed(2)} m/s`;
+  $('heading').textContent = c.heading == null ? '-' : `${c.heading.toFixed(1)}°`;
+}
+
+function buildMessage(pos) {
+  const c = pos.coords;
+  return {
+    type: 'ncc_live_position',
+    schema_version: 1,
+    profile: profile(),
+    position: {
+      source: 'gps',
+      latitude: c.latitude,
+      longitude: c.longitude,
+      altitude: finiteOrNull(c.altitude),
+      accuracy_m: finiteOrNull(c.accuracy),
+      speed_mps: finiteOrNull(c.speed),
+      heading_deg: finiteOrNull(c.heading)
+    },
+    client_timestamp_ms: Date.now(),
+    client_timestamp: new Date().toISOString()
+  };
+}
+
+async function publishPosition(pos, force=false) {
+  if (!pos) throw new Error('GPS position is not available.');
+
+  const topic = cleanTopic($('sessionCode').value);
+  if (topic.length < 20) {
+    throw new Error('Session Code معتبر نیست یا خیلی کوتاه است.');
+  }
+
+  const now = Date.now();
+  if (!force && now - lastSentAt < LIVE_INTERVAL_MS) return;
+
+  const response = await fetch(`${NTFY_BASE}/${encodeURIComponent(topic)}`, {
+    method: 'POST',
+    headers: {'Content-Type': 'text/plain;charset=UTF-8'},
+    body: JSON.stringify(buildMessage(pos))
+  });
+
+  if (!response.ok) {
+    throw new Error(`Relay HTTP ${response.status}`);
+  }
+
+  lastSentAt = now;
+  $('lastSend').textContent = new Date().toLocaleTimeString();
+  $('relayStatus').textContent = 'Relay: ارسال موفق';
+  $('relayStatus').className = 'ok';
+  log(`POSITION SENT | ${profile().user_id}`);
+}
+
+function onPosition(pos) {
+  lastPosition = pos;
+  showPosition(pos);
+  $('sendOnce').disabled = false;
+  $('startLive').disabled = false;
+
+  if (liveEnabled) {
+    publishPosition(pos).catch(err => {
+      $('relayStatus').textContent = `Relay: خطا — ${err.message}`;
+      $('relayStatus').className = 'bad';
+      log(`SEND ERROR: ${err.message}`);
+    });
+  }
+}
+
+function onGpsError(err) {
+  log(`GPS ERROR ${err.code}: ${err.message}`);
+}
+
+function enableGps() {
+  if (!window.isSecureContext) {
+    log('Secure Context لازم است. این صفحه باید با HTTPS باز شود.');
+    return;
+  }
+  if (!navigator.geolocation) {
+    log('Geolocation API در این مرورگر وجود ندارد.');
+    return;
+  }
+  if (watchId !== null) return;
+
+  watchId = navigator.geolocation.watchPosition(
+    onPosition,
+    onGpsError,
+    {enableHighAccuracy:true, maximumAge:0, timeout:15000}
+  );
+  $('enableGps').disabled = true;
+  log('GPS WATCH STARTED');
+}
+
+function startLive() {
+  if (!lastPosition) return;
+  liveEnabled = true;
+  $('startLive').disabled = true;
+  $('stopLive').disabled = false;
+  publishPosition(lastPosition, true).catch(err => log(`SEND ERROR: ${err.message}`));
+  log('LIVE SEND STARTED');
+}
+
+function stopLive() {
+  liveEnabled = false;
+  $('startLive').disabled = false;
+  $('stopLive').disabled = true;
+  log('LIVE SEND STOPPED');
+}
+
+$('saveProfile').addEventListener('click', saveProfile);
+$('enableGps').addEventListener('click', enableGps);
+$('sendOnce').addEventListener('click', () => publishPosition(lastPosition, true).catch(err => log(`SEND ERROR: ${err.message}`)));
+$('startLive').addEventListener('click', startLive);
+$('stopLive').addEventListener('click', stopLive);
+$('avatarId').addEventListener('change', updateAvatarPreview);
+$('heightCm').addEventListener('input', updateAvatarPreview);
+
+if (window.isSecureContext) {
+  $('secureStatus').textContent = 'Secure Context: YES';
+  $('secureStatus').className = 'ok';
+} else {
+  $('secureStatus').textContent = 'Secure Context: NO — GPS مرورگر فعال نخواهد شد';
+  $('secureStatus').className = 'bad';
+}
+
+loadProfile();
+updateAvatarPreview();
+log('NCC MOBILE USER READY');
+</script>
+</body>
+</html>
