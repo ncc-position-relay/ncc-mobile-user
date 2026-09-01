@@ -60,16 +60,6 @@
         </select>
       </div>
       <div>
-        <label>طبقه</label>
-        <select id="floorId">
-          <option value="">Outdoor</option>
-          <option value="F00">F00</option>
-          <option value="F01">F01</option>
-          <option value="F02">F02</option>
-          <option value="F03">F03</option>
-        </select>
-      </div>
-      <div>
         <label>Avatar</label>
         <select id="avatarId">
           <option value="avatar_male_01">avatar_male_01.glb</option>
@@ -90,19 +80,83 @@
   </section>
 
   <section class="card">
-    <h2>GPS</h2>
-    <div class="row"><span>Latitude</span><span id="lat" class="ltr">-</span></div>
-    <div class="row"><span>Longitude</span><span id="lon" class="ltr">-</span></div>
-    <div class="row"><span>Accuracy</span><span id="accuracy" class="ltr">-</span></div>
-    <div class="row"><span>Altitude</span><span id="altitude" class="ltr">-</span></div>
-    <div class="row"><span>Speed</span><span id="speed" class="ltr">-</span></div>
-    <div class="row"><span>Heading</span><span id="heading" class="ltr">-</span></div>
-    <div class="row"><span>Last Send</span><span id="lastSend" class="ltr">-</span></div>
+    <h2>حالت موقعیت‌یابی</h2>
+
+    <div class="grid">
+      <div>
+        <label>Position Mode</label>
+        <select id="positionMode">
+          <option value="gps">Outdoor GPS</option>
+          <option value="indoor">Indoor NCC</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Heading (deg)</label>
+        <input id="manualHeading" type="number" min="0" max="359.9" step="1" value="0">
+      </div>
+    </div>
+
+    <div id="gpsPanel" style="margin-top:12px">
+      <h2>Outdoor GPS</h2>
+
+      <div class="row"><span>Latitude</span><span id="lat" class="ltr">-</span></div>
+      <div class="row"><span>Longitude</span><span id="lon" class="ltr">-</span></div>
+      <div class="row"><span>Accuracy</span><span id="accuracy" class="ltr">-</span></div>
+      <div class="row"><span>Altitude</span><span id="altitude" class="ltr">-</span></div>
+      <div class="row"><span>Speed</span><span id="speed" class="ltr">-</span></div>
+      <div class="row"><span>Heading</span><span id="heading" class="ltr">-</span></div>
+
+      <button id="enableGps" style="margin-top:10px">فعال‌کردن GPS</button>
+    </div>
+
+    <div id="indoorPanel" style="display:none;margin-top:12px">
+      <h2>Indoor NCC</h2>
+
+      <div class="grid">
+        <div>
+          <label>Model X (m)</label>
+          <input id="modelX" type="number" step="0.1" value="0">
+        </div>
+
+        <div>
+          <label>Model Z (m)</label>
+          <input id="modelZ" type="number" step="0.1" value="0">
+        </div>
+
+        <div>
+          <label>Step (m)</label>
+          <input id="indoorStep" type="number" min="0.1" max="20" step="0.1" value="1">
+        </div>
+
+        <div>
+          <label>Floor</label>
+          <select id="indoorFloor">
+            <option value="F00">F00</option>
+            <option value="F01">F01</option>
+            <option value="F02" selected>F02</option>
+            <option value="F03">F03</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top:10px">
+        <button id="moveForward">حرکت رو به جلو</button>
+        <button id="moveBackward">حرکت به عقب</button>
+        <button id="moveLeft">حرکت به چپ</button>
+        <button id="moveRight">حرکت به راست</button>
+      </div>
+
+      <div class="muted" style="margin-top:8px">
+        در این مرحله مختصات Indoor به‌صورت دستی/آزمایشی است. بعداً PDR/IMU همین model_x و model_z را تولید می‌کند.
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:12px"><span>Last Send</span><span id="lastSend" class="ltr">-</span></div>
 
     <div class="grid" style="margin-top:12px">
-      <button id="enableGps">فعال‌کردن GPS</button>
-      <button id="sendOnce" class="primary" disabled>ارسال یک موقعیت</button>
-      <button id="startLive" class="primary" disabled>شروع ارسال زنده</button>
+      <button id="sendOnce" class="primary">ارسال یک موقعیت</button>
+      <button id="startLive" class="primary">شروع ارسال زنده</button>
       <button id="stopLive" class="danger" disabled>توقف ارسال زنده</button>
     </div>
   </section>
@@ -116,13 +170,19 @@
 
 <script>
 const $ = id => document.getElementById(id);
+
 const NTFY_BASE = 'https://ntfy.sh';
-const LIVE_INTERVAL_MS = 1000;
+
+/*
+ * Keep the public pilot below aggressive request rates.
+ * Later, NCC's own relay can run at a higher frequency.
+ */
+const LIVE_INTERVAL_MS = 6000;
 
 let watchId = null;
-let lastPosition = null;
+let lastGpsPosition = null;
 let liveEnabled = false;
-let lastSentAt = 0;
+let liveTimer = null;
 
 function log(text) {
   const t = new Date().toLocaleTimeString();
@@ -133,6 +193,17 @@ function cleanTopic(value) {
   return value.trim().replace(/[^A-Za-z0-9_-]/g, '');
 }
 
+function numberOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeHeading(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return ((n % 360) + 360) % 360;
+}
+
 function profile() {
   return {
     user_id: $('userId').value.trim() || 'PHONE_001',
@@ -141,111 +212,182 @@ function profile() {
     height_cm: Number($('heightCm').value) || 175,
     weight_kg: Number($('weightKg').value) || null,
     role: $('role').value,
-    floor_id: $('floorId').value || null
+    floor_id:
+      $('positionMode').value === 'indoor'
+        ? $('indoorFloor').value
+        : null,
   };
 }
 
 function saveProfile() {
-  const data = {...profile(), session_code: $('sessionCode').value.trim()};
-  localStorage.setItem('ncc_mobile_profile_v1', JSON.stringify(data));
+  const data = {
+    ...profile(),
+    session_code: $('sessionCode').value.trim(),
+    position_mode: $('positionMode').value,
+    model_x: numberOrNull($('modelX').value),
+    model_z: numberOrNull($('modelZ').value),
+    manual_heading: normalizeHeading($('manualHeading').value),
+  };
+
+  localStorage.setItem(
+    'ncc_mobile_profile_v2',
+    JSON.stringify(data),
+  );
+
   log('PROFILE SAVED');
 }
 
 function loadProfile() {
   try {
-    const data = JSON.parse(localStorage.getItem('ncc_mobile_profile_v1') || 'null');
+    const data = JSON.parse(
+      localStorage.getItem('ncc_mobile_profile_v2')
+      || localStorage.getItem('ncc_mobile_profile_v1')
+      || 'null'
+    );
+
     if (!data) return;
+
     $('userId').value = data.user_id ?? 'PHONE_001';
     $('label').value = data.label ?? 'User 1';
     $('avatarId').value = data.avatar_id ?? 'avatar_male_01';
     $('heightCm').value = data.height_cm ?? 175;
     $('weightKg').value = data.weight_kg ?? 75;
     $('role').value = data.role ?? 'visitor';
-    $('floorId').value = data.floor_id ?? '';
     $('sessionCode').value = data.session_code ?? '';
+    $('positionMode').value = data.position_mode ?? 'gps';
+    $('modelX').value = data.model_x ?? 0;
+    $('modelZ').value = data.model_z ?? 0;
+    $('manualHeading').value = data.manual_heading ?? 0;
+
+    if (data.floor_id && /^F0[0-3]$/.test(data.floor_id)) {
+      $('indoorFloor').value = data.floor_id;
+    }
   } catch (_) {}
+
   updateAvatarPreview();
+  updateModeUi();
 }
 
 function updateAvatarPreview() {
   $('avatarLabel').textContent = `${$('avatarId').value}.glb`;
-  $('heightPreview').textContent = `Target height: ${Number($('heightCm').value) || 175} cm`;
+  $('heightPreview').textContent =
+    `Target height: ${Number($('heightCm').value) || 175} cm`;
 }
 
-function finiteOrNull(v) {
-  return Number.isFinite(v) ? v : null;
-}
-
-function showPosition(pos) {
+function showGpsPosition(pos) {
   const c = pos.coords;
+
   $('lat').textContent = c.latitude.toFixed(8);
   $('lon').textContent = c.longitude.toFixed(8);
   $('accuracy').textContent = `${c.accuracy.toFixed(1)} m`;
-  $('altitude').textContent = c.altitude == null ? '-' : `${c.altitude.toFixed(1)} m`;
-  $('speed').textContent = c.speed == null ? '-' : `${c.speed.toFixed(2)} m/s`;
-  $('heading').textContent = c.heading == null ? '-' : `${c.heading.toFixed(1)}°`;
+  $('altitude').textContent =
+    c.altitude == null ? '-' : `${c.altitude.toFixed(1)} m`;
+  $('speed').textContent =
+    c.speed == null ? '-' : `${c.speed.toFixed(2)} m/s`;
+  $('heading').textContent =
+    c.heading == null ? '-' : `${c.heading.toFixed(1)}°`;
+
+  if (c.heading != null && Number.isFinite(c.heading)) {
+    $('manualHeading').value = c.heading.toFixed(1);
+  }
 }
 
-function buildMessage(pos) {
-  const c = pos.coords;
-  return {
-    type: 'ncc_live_position',
-    schema_version: 1,
-    profile: profile(),
-    position: {
+function buildMessage() {
+  const mode = $('positionMode').value;
+  const p = profile();
+
+  let position;
+
+  if (mode === 'gps') {
+    if (!lastGpsPosition) {
+      throw new Error('GPS position is not available.');
+    }
+
+    const c = lastGpsPosition.coords;
+
+    position = {
       source: 'gps',
       latitude: c.latitude,
       longitude: c.longitude,
-      altitude: finiteOrNull(c.altitude),
-      accuracy_m: finiteOrNull(c.accuracy),
-      speed_mps: finiteOrNull(c.speed),
-      heading_deg: finiteOrNull(c.heading)
-    },
+      altitude: numberOrNull(c.altitude),
+      accuracy_m: numberOrNull(c.accuracy),
+      speed_mps: numberOrNull(c.speed),
+      heading_deg:
+        c.heading == null
+          ? normalizeHeading($('manualHeading').value)
+          : normalizeHeading(c.heading),
+    };
+
+  } else {
+    const modelX = Number($('modelX').value);
+    const modelZ = Number($('modelZ').value);
+
+    if (!Number.isFinite(modelX) || !Number.isFinite(modelZ)) {
+      throw new Error('Indoor model_x/model_z are invalid.');
+    }
+
+    position = {
+      source: 'indoor',
+      model_x: modelX,
+      model_z: modelZ,
+      heading_deg: normalizeHeading($('manualHeading').value),
+    };
+  }
+
+  return {
+    type: 'ncc_live_position',
+    schema_version: 2,
+    position_mode: mode,
+    profile: p,
+    position,
     client_timestamp_ms: Date.now(),
-    client_timestamp: new Date().toISOString()
+    client_timestamp: new Date().toISOString(),
   };
 }
 
-async function publishPosition(pos, force=false) {
-  if (!pos) throw new Error('GPS position is not available.');
-
+async function publishCurrentPosition() {
   const topic = cleanTopic($('sessionCode').value);
+
   if (topic.length < 20) {
     throw new Error('Session Code معتبر نیست یا خیلی کوتاه است.');
   }
 
-  const now = Date.now();
-  if (!force && now - lastSentAt < LIVE_INTERVAL_MS) return;
+  const message = buildMessage();
 
-  const response = await fetch(`${NTFY_BASE}/${encodeURIComponent(topic)}`, {
-    method: 'POST',
-    headers: {'Content-Type': 'text/plain;charset=UTF-8'},
-    body: JSON.stringify(buildMessage(pos))
-  });
+  const response = await fetch(
+    `${NTFY_BASE}/${encodeURIComponent(topic)}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=UTF-8',
+      },
+      body: JSON.stringify(message),
+    },
+  );
 
   if (!response.ok) {
     throw new Error(`Relay HTTP ${response.status}`);
   }
 
-  lastSentAt = now;
   $('lastSend').textContent = new Date().toLocaleTimeString();
-  $('relayStatus').textContent = 'Relay: ارسال موفق';
+
+  $('relayStatus').textContent =
+    `Relay: ارسال موفق | ${message.position_mode}`;
+
   $('relayStatus').className = 'ok';
-  log(`POSITION SENT | ${profile().user_id}`);
+
+  log(
+    `POSITION SENT | ${message.profile.user_id} | `
+    + `${message.position_mode}`
+  );
 }
 
-function onPosition(pos) {
-  lastPosition = pos;
-  showPosition(pos);
-  $('sendOnce').disabled = false;
-  $('startLive').disabled = false;
+function onGpsPosition(pos) {
+  lastGpsPosition = pos;
+  showGpsPosition(pos);
 
-  if (liveEnabled) {
-    publishPosition(pos).catch(err => {
-      $('relayStatus').textContent = `Relay: خطا — ${err.message}`;
-      $('relayStatus').className = 'bad';
-      log(`SEND ERROR: ${err.message}`);
-    });
+  if (liveEnabled && $('positionMode').value === 'gps') {
+    // Live timer performs the actual transmission.
   }
 }
 
@@ -255,59 +397,181 @@ function onGpsError(err) {
 
 function enableGps() {
   if (!window.isSecureContext) {
-    log('Secure Context لازم است. این صفحه باید با HTTPS باز شود.');
+    log('Secure Context لازم است. صفحه باید با HTTPS باز شود.');
     return;
   }
+
   if (!navigator.geolocation) {
     log('Geolocation API در این مرورگر وجود ندارد.');
     return;
   }
+
   if (watchId !== null) return;
 
   watchId = navigator.geolocation.watchPosition(
-    onPosition,
+    onGpsPosition,
     onGpsError,
-    {enableHighAccuracy:true, maximumAge:0, timeout:15000}
+    {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 15000,
+    },
   );
+
   $('enableGps').disabled = true;
   log('GPS WATCH STARTED');
 }
 
+function updateModeUi() {
+  const indoor = $('positionMode').value === 'indoor';
+
+  $('gpsPanel').style.display = indoor ? 'none' : 'block';
+  $('indoorPanel').style.display = indoor ? 'block' : 'none';
+
+  if (indoor) {
+    log('POSITION MODE: INDOOR NCC');
+  } else {
+    log('POSITION MODE: OUTDOOR GPS');
+  }
+}
+
+function moveIndoor(forwardM, rightM) {
+  const x = Number($('modelX').value) || 0;
+  const z = Number($('modelZ').value) || 0;
+  const headingDeg = normalizeHeading($('manualHeading').value);
+  const heading = headingDeg * Math.PI / 180;
+
+  /*
+   * Local NCC test movement:
+   * heading=0 -> +Z
+   * heading=90 -> +X
+   */
+  const dx =
+    Math.sin(heading) * forwardM
+    + Math.cos(heading) * rightM;
+
+  const dz =
+    Math.cos(heading) * forwardM
+    - Math.sin(heading) * rightM;
+
+  $('modelX').value = (x + dx).toFixed(3);
+  $('modelZ').value = (z + dz).toFixed(3);
+
+  if (liveEnabled) {
+    publishCurrentPosition()
+      .catch(err => log(`SEND ERROR: ${err.message}`));
+  }
+}
+
 function startLive() {
-  if (!lastPosition) return;
+  if (liveEnabled) return;
+
   liveEnabled = true;
+
   $('startLive').disabled = true;
   $('stopLive').disabled = false;
-  publishPosition(lastPosition, true).catch(err => log(`SEND ERROR: ${err.message}`));
-  log('LIVE SEND STARTED');
+
+  publishCurrentPosition()
+    .catch(err => log(`SEND ERROR: ${err.message}`));
+
+  liveTimer = setInterval(
+    () => {
+      publishCurrentPosition()
+        .catch(err => {
+          $('relayStatus').textContent =
+            `Relay: خطا — ${err.message}`;
+          $('relayStatus').className = 'bad';
+          log(`SEND ERROR: ${err.message}`);
+        });
+    },
+    LIVE_INTERVAL_MS,
+  );
+
+  log(`LIVE SEND STARTED | ${LIVE_INTERVAL_MS / 1000}s`);
 }
 
 function stopLive() {
   liveEnabled = false;
+
+  if (liveTimer !== null) {
+    clearInterval(liveTimer);
+    liveTimer = null;
+  }
+
   $('startLive').disabled = false;
   $('stopLive').disabled = true;
+
   log('LIVE SEND STOPPED');
 }
 
 $('saveProfile').addEventListener('click', saveProfile);
 $('enableGps').addEventListener('click', enableGps);
-$('sendOnce').addEventListener('click', () => publishPosition(lastPosition, true).catch(err => log(`SEND ERROR: ${err.message}`)));
+
+$('sendOnce').addEventListener(
+  'click',
+  () => publishCurrentPosition()
+    .catch(err => log(`SEND ERROR: ${err.message}`)),
+);
+
 $('startLive').addEventListener('click', startLive);
 $('stopLive').addEventListener('click', stopLive);
+
 $('avatarId').addEventListener('change', updateAvatarPreview);
 $('heightCm').addEventListener('input', updateAvatarPreview);
+
+$('positionMode').addEventListener(
+  'change',
+  () => {
+    stopLive();
+    updateModeUi();
+  },
+);
+
+$('moveForward').addEventListener(
+  'click',
+  () => moveIndoor(
+    Number($('indoorStep').value) || 1,
+    0,
+  ),
+);
+
+$('moveBackward').addEventListener(
+  'click',
+  () => moveIndoor(
+    -(Number($('indoorStep').value) || 1),
+    0,
+  ),
+);
+
+$('moveLeft').addEventListener(
+  'click',
+  () => moveIndoor(
+    0,
+    -(Number($('indoorStep').value) || 1),
+  ),
+);
+
+$('moveRight').addEventListener(
+  'click',
+  () => moveIndoor(
+    0,
+    Number($('indoorStep').value) || 1,
+  ),
+);
 
 if (window.isSecureContext) {
   $('secureStatus').textContent = 'Secure Context: YES';
   $('secureStatus').className = 'ok';
 } else {
-  $('secureStatus').textContent = 'Secure Context: NO — GPS مرورگر فعال نخواهد شد';
+  $('secureStatus').textContent =
+    'Secure Context: NO — GPS مرورگر فعال نخواهد شد';
   $('secureStatus').className = 'bad';
 }
 
 loadProfile();
 updateAvatarPreview();
-log('NCC MOBILE USER READY');
+updateModeUi();
+log('NCC MOBILE USER STAGE 40 READY');
 </script>
 </body>
 </html>
