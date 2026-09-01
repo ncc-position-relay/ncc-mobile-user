@@ -104,6 +104,7 @@
       <div class="row"><span>Longitude</span><span id="lon" class="ltr">-</span></div>
       <div class="row"><span>Accuracy</span><span id="accuracy" class="ltr">-</span></div>
       <div class="row"><span>Altitude</span><span id="altitude" class="ltr">-</span></div>
+      <div class="row"><span>Altitude Accuracy</span><span id="altitudeAccuracy" class="ltr">-</span></div>
       <div class="row"><span>Speed</span><span id="speed" class="ltr">-</span></div>
       <div class="row"><span>Heading</span><span id="heading" class="ltr">-</span></div>
 
@@ -282,6 +283,12 @@ function showGpsPosition(pos) {
   $('accuracy').textContent = `${c.accuracy.toFixed(1)} m`;
   $('altitude').textContent =
     c.altitude == null ? '-' : `${c.altitude.toFixed(1)} m`;
+
+  $('altitudeAccuracy').textContent =
+    c.altitudeAccuracy == null
+      ? '-'
+      : `${c.altitudeAccuracy.toFixed(1)} m`;
+
   $('speed').textContent =
     c.speed == null ? '-' : `${c.speed.toFixed(2)} m/s`;
   $('heading').textContent =
@@ -307,15 +314,41 @@ function buildMessage() {
 
     position = {
       source: 'gps',
-      latitude: c.latitude,
-      longitude: c.longitude,
-      altitude: numberOrNull(c.altitude),
-      accuracy_m: numberOrNull(c.accuracy),
-      speed_mps: numberOrNull(c.speed),
+
+      latitude:
+        c.latitude,
+
+      longitude:
+        c.longitude,
+
+      altitude:
+        numberOrNull(
+          c.altitude
+        ),
+
+      altitude_accuracy_m:
+        numberOrNull(
+          c.altitudeAccuracy
+        ),
+
+      accuracy_m:
+        numberOrNull(
+          c.accuracy
+        ),
+
+      speed_mps:
+        numberOrNull(
+          c.speed
+        ),
+
       heading_deg:
         c.heading == null
-          ? normalizeHeading($('manualHeading').value)
-          : normalizeHeading(c.heading),
+          ? normalizeHeading(
+              $('manualHeading').value
+            )
+          : normalizeHeading(
+              c.heading
+            ),
     };
 
   } else {
