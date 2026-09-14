@@ -1,0 +1,47 @@
+export const NCC_CONFIG = Object.freeze({
+  stage: '106',
+  relayBase: 'https://ntfy.sh',
+  map: {
+    center: [51.33318, 35.69739],
+    zoom: 20,
+    minZoom: 16,
+    maxZoom: 22,
+    rasterTiles: [
+      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    ],
+  },
+  qrPoints: [
+    { id: 'NCC_QR_L1', lon: 51.3333354, lat: 35.6973805, e: 530157.137, n: 3950435.561, h: 1.755, epsg: 32639 },
+    { id: 'NCC_QR_L2', lon: 51.3330147, lat: 35.6974028, e: 530128.118, n: 3950437.940, h: 1.757, epsg: 32639 },
+    { id: 'NCC_QR_L3', lon: 51.3330614, lat: 35.6973830, e: 530132.348, n: 3950435.758, h: 1.777, epsg: 32639 },
+  ],
+  pdr: {
+    stepLengthM: 0.70,
+    peakThresholdMps2: 0.90,
+    resetThresholdMps2: 0.18,
+    maxPeakMps2: 4.50,
+    minStepIntervalMs: 350,
+    cadenceResetMs: 1800,
+    baselineAlpha: 0.025,
+    signalAlpha: 0.35,
+    headingAlpha: 0.22,
+    sendMinIntervalMs: 350,
+    chartSamples: 180,
+  },
+  // These are the SAME Stage-33 normalized runtime X/Z <-> UTM constants
+  // used by the NCC backend. Keeping them identical ensures that PDR positions
+  // sent by the phone resolve to the same model X/Z used by Desktop/XR avatars.
+  modelRuntimeTransform: {
+    A: 1.001291223339,
+    B: -0.053002028959,
+    TE: 530195.239973,
+    TN: 3950441.563611,
+  },
+  model: {
+    defaultUrl: './assets/ncc_building.glb',
+    verticalOffsetM: 0,
+    avatarHeightM: 1.72,
+    gridSizeM: 80,
+    gridDivisions: 40,
+  },
+});
