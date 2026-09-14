@@ -3,608 +3,858 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0d1720">
-  <title>NCC XR Mobile User</title>
+  <meta name="theme-color" content="#0b2230">
+  <meta name="color-scheme" content="dark">
+  <title>NCC XR — Mobile Position</title>
   <style>
     *{box-sizing:border-box}
-    body{margin:0;background:#0d1720;color:#eef5ff;font-family:Tahoma,Arial,sans-serif;padding:14px}
-    main{max-width:760px;margin:auto}
-    .card{background:#162330;border:1px solid #2d4052;border-radius:12px;padding:14px;margin-bottom:12px}
-    h1{font-size:22px;margin:0 0 8px} h2{font-size:17px;margin:0 0 10px}
-    .muted{color:#aab8c5;font-size:13px}.ok{color:#77e39b}.bad{color:#ff8585}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-    @media(max-width:620px){.grid{grid-template-columns:1fr}}
-    label{display:block;font-size:13px;margin-bottom:5px}
-    input,select,button{width:100%;min-height:44px;border-radius:8px;border:1px solid #536b80;font-size:15px}
-    input,select{background:#0b151e;color:#fff;padding:8px 10px}
-    button{padding:8px 10px;background:#273b4e;color:#fff;font-weight:700;cursor:pointer}
-    button.primary{background:#1769aa}.danger{background:#8e2932}
-    button:disabled{opacity:.45;cursor:default}
-    .row{display:grid;grid-template-columns:140px 1fr;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+    :root{--bg:#081923;--card:#102c3d;--card2:#0c2432;--line:#31596e;--txt:#eef8fc;--muted:#a9c0cc;--ok:#65e39a;--warn:#ffd17a;--bad:#ff8181;--primary:#1685ad}
+    html,body{margin:0;min-height:100%;background:linear-gradient(180deg,#071722,#0a2331);color:var(--txt);font-family:Tahoma,Arial,sans-serif}
+    body{padding:14px} main{max-width:820px;margin:auto}
+    .card{background:rgba(16,44,61,.96);border:1px solid var(--line);border-radius:16px;padding:15px;margin-bottom:12px;box-shadow:0 10px 35px rgba(0,0,0,.18)}
+    h1{font-size:22px;margin:0 0 6px} h2{font-size:17px;margin:0 0 10px}
+    .muted{color:var(--muted);font-size:12px;line-height:1.8}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+    label{display:grid;gap:5px;font-size:12px}
+    input,select,button{width:100%;min-height:45px;border-radius:9px;border:1px solid #52758a;font:14px Tahoma,Arial,sans-serif}
+    input,select{background:#071822;color:white;padding:8px 10px}
+    button{padding:9px 11px;background:#29465a;color:white;font-weight:700;cursor:pointer}
+    button.primary{background:var(--primary)} button.success{background:#247e55} button.danger{background:#982f39} button:disabled{opacity:.45;cursor:default}
+    .row{display:grid;grid-template-columns:150px 1fr;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.06)}
     .ltr{direction:ltr;text-align:left;font-family:Consolas,monospace}
-    #log{direction:ltr;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;max-height:250px;overflow-y:auto;background:#081018;border-radius:8px;padding:9px;font:12px Consolas,monospace}
-    .avatarBox{display:flex;gap:12px;align-items:center;background:#0b151e;border-radius:10px;padding:12px}
-    .avatarIcon{width:74px;height:110px;border:2px solid #5b83aa;border-radius:38px 38px 14px 14px;display:flex;align-items:center;justify-content:center;font-size:42px}
-    code{direction:ltr;display:inline-block}
+    .status{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.pill{border:1px solid #456a7d;border-radius:999px;padding:4px 8px;font-size:11px;background:#09202d}
+    #log{direction:ltr;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;background:#05121a;border-radius:9px;padding:10px;font:11px/1.6 Consolas,monospace}
+    .notice{border-right:4px solid var(--primary);background:#0a2533;padding:10px;border-radius:9px;font-size:12px;line-height:1.9}
+    .toolbar{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-top:11px}
+    .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}.kpi>div{background:#09212d;border-radius:10px;padding:8px;text-align:center}.kpi b{display:block;font-size:18px}.kpi small{color:var(--muted)}
+    .avatar{display:flex;align-items:center;gap:12px;background:#0a2230;border-radius:12px;padding:10px}
+    .avatarIcon,.photoPreview{width:72px;height:72px;border:2px solid #5b83aa;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-size:32px;background:#071822}
+    .photoPreview[hidden]{display:none}.cameraBox{border:1px dashed #4e7184;border-radius:12px;padding:10px;background:#071b26}
+    #qrVideo{width:100%;max-height:420px;object-fit:cover;border-radius:10px;background:#02080c;display:none}
+    #qrResult{background:#071822;border-radius:10px;padding:10px;margin-top:10px;display:none}
+    .sourceBanner{padding:9px;border-radius:10px;background:#09212d;margin:8px 0;font-size:12px}
+    .photoActions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:9px}
+    .small{font-size:11px}.hiddenInput{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+    @media(max-width:650px){.grid,.grid3,.toolbar,.kpi,.photoActions{grid-template-columns:1fr}.row{grid-template-columns:1fr}.row span:first-child{color:var(--muted)}}
   </style>
 </head>
 <body>
 <main>
   <section class="card">
-    <h1>NCC XR — Mobile User</h1>
-    <div id="secureStatus"></div>
-    <div class="muted">Web App مستقل پروژه NCC — بدون نیاز به نصب اپلیکیشن</div>
+    <h1>NCC XR — کاربر موبایل</h1>
+    <div class="muted">موقعیت را با GPS، QR نصب‌شده داخل ساختمان یا نقطه دستی به سامانه NCC ارسال کنید.</div>
+    <div class="status">
+      <span id="secure" class="pill">Secure Context: …</span>
+      <span id="network" class="pill">Network: …</span>
+      <span id="gpsPermission" class="pill">GPS Permission: …</span>
+      <span id="positionSource" class="pill">Position: —</span>
+    </div>
   </section>
 
   <section class="card">
-    <h2>اتصال به جلسه</h2>
-    <label>Session Code</label>
-    <input id="sessionCode" placeholder="کد جلسه را از اپراتور NCC دریافت کنید">
-    <div class="muted" style="margin-top:6px">این کد مسیر خصوصیِ آزمایشی ارسال داده است؛ آن را عمومی نکنید.</div>
+    <h2>۱) اتصال به جلسه NCC</h2>
+    <label>Session Code
+      <input id="sessionCode" type="password" autocomplete="off" placeholder="کد جلسه را از اپراتور NCC دریافت کنید">
+    </label>
+    <div class="notice" style="margin-top:9px">Session Code بین کاربران مشترک است، اما <b>User ID باید یکتا باشد</b>. این کد را عمومی منتشر نکنید.</div>
   </section>
 
   <section class="card">
-    <h2>مشخصات کاربر</h2>
+    <h2>۲) مشخصات و تصویر کاربر</h2>
     <div class="grid">
-      <div><label>User ID</label><input id="userId" value="PHONE_001"></div>
-      <div><label>نام کاربر</label><input id="label" value="User 1"></div>
-      <div><label>قد (cm)</label><input id="heightCm" type="number" min="100" max="230" value="175"></div>
-      <div><label>وزن (kg)</label><input id="weightKg" type="number" min="30" max="250" value="75"></div>
+      <label>User ID<input id="userId" maxlength="64"></label>
+      <label>نام نمایشی<input id="label" maxlength="100"></label>
+      <label>جنسیت
+        <select id="gender"><option value="unknown">نامشخص</option><option value="male">آقا</option><option value="female">خانم</option></select>
+      </label>
+      <label>Role
+        <select id="role"><option value="visitor">Visitor</option><option value="staff">Staff</option><option value="responder">Responder</option><option value="commander">Commander</option></select>
+      </label>
+      <label>Avatar ID اختیاری<input id="avatarId" placeholder="اگر خالی باشد، عکس کاربر اولویت دارد"></label>
+      <label>قد (cm)<input id="heightCm" type="number" min="80" max="250" value="175"></label>
+      <label>وزن (kg)<input id="weightKg" type="number" min="20" max="400" value="75"></label>
+      <label>Floor/Label اختیاری<input id="floorId" placeholder="مثال F01"></label>
+    </div>
+
+    <div class="avatar" style="margin-top:10px">
+      <div id="avatarIcon" class="avatarIcon">👤</div>
+      <img id="photoPreview" class="photoPreview" alt="تصویر کاربر" hidden>
       <div>
-        <label>Role</label>
-        <select id="role">
-          <option value="visitor">Visitor</option>
-          <option value="staff">Staff</option>
-          <option value="responder">Responder</option>
-          <option value="commander">Commander</option>
-        </select>
-      </div>
-      <div>
-        <label>Avatar</label>
-        <select id="avatarId">
-          <option value="avatar_male_01">avatar_male_01.glb</option>
-        </select>
+        <b id="avatarPreview">Avatar: auto</b>
+        <div class="muted">اگر Avatar ID اختصاصی مشخص نشده باشد و عکس ارسال شده باشد، عکس کاربر به‌جای آواتار عمومی نمایش داده می‌شود.</div>
       </div>
     </div>
 
-    <div class="avatarBox" style="margin-top:12px">
-      <div class="avatarIcon">👤</div>
-      <div>
-        <b id="avatarLabel">avatar_male_01.glb</b><br>
-        <span class="muted">مدل سه‌بعدی واقعی در سامانه کامپیوتر با همین Avatar ID بارگذاری می‌شود.</span><br>
-        <span id="heightPreview">Target height: 175 cm</span>
-      </div>
+    <input id="photoInput" class="hiddenInput" type="file" accept="image/*" capture="user">
+    <div class="photoActions">
+      <button id="takePhoto">📷 گرفتن عکس کاربر</button>
+      <button id="sendPhoto" class="success" disabled>ارسال عکس به سامانه</button>
+      <button id="clearPhoto" class="danger" disabled>حذف عکس محلی</button>
     </div>
-
-    <button id="saveProfile" style="margin-top:10px">ذخیره مشخصات روی گوشی</button>
+    <div class="muted">برای عبور امن از Relay، عکس فقط برای Avatar به تصویر بسیار کوچک و فشرده تبدیل می‌شود؛ تصویر اصلی گوشی ارسال نمی‌شود.</div>
+    <button id="saveProfile" style="margin-top:10px">ذخیره مشخصات روی همین گوشی</button>
   </section>
 
   <section class="card">
-    <h2>حالت موقعیت‌یابی</h2>
+    <h2>۳) GPS و Heading</h2>
+    <div class="grid3">
+      <label>فاصله ارسال زنده
+        <select id="interval"><option value="3">۳ ثانیه</option><option value="5">۵ ثانیه</option><option value="6" selected>۶ ثانیه</option><option value="10">۱۰ ثانیه</option><option value="15">۱۵ ثانیه</option></select>
+      </label>
+      <label>Heading دستی (deg)<input id="manualHeading" type="number" min="0" max="359.9" step="0.1" value="0"></label>
+      <label>حد هشدار دقت GPS (m)<input id="accuracyWarn" type="number" min="1" max="500" value="50"></label>
+    </div>
+    <div class="row"><span>Latitude</span><span id="lat" class="ltr">-</span></div>
+    <div class="row"><span>Longitude</span><span id="lon" class="ltr">-</span></div>
+    <div class="row"><span>Accuracy</span><span id="accuracy" class="ltr">-</span></div>
+    <div class="row"><span>Altitude / H</span><span id="altitude" class="ltr">-</span></div>
+    <div class="row"><span>Speed</span><span id="speed" class="ltr">-</span></div>
+    <div class="row"><span>Heading</span><span id="heading" class="ltr">-</span></div>
+    <div class="row"><span>Device heading</span><span id="deviceHeading" class="ltr">-</span></div>
+    <div class="toolbar">
+      <button id="enableGps">فعال‌کردن GPS و Heading</button>
+      <button id="gpsOnce">GPS یک‌بار + ارسال</button>
+      <button id="startLive" class="primary">شروع مسیر زنده GPS</button>
+      <button id="stopLive" class="danger" disabled>توقف مسیر زنده</button>
+    </div>
+  </section>
 
+  <section class="card">
+    <h2>۴) تعیین موقعیت داخل ساختمان با QR Code</h2>
+    <div class="notice">QR نصب‌شده روی دیوار یک نقطه کنترل ثابت است. اسکن QR، مختصات دقیق همان نقطه را می‌خواند و پس از تأیید کاربر به سامانه ارسال می‌کند. برای جلوگیری از جایگزینی فوری با GPS، ارسال زنده GPS هنگام تأیید QR متوقف می‌شود.</div>
+    <div class="cameraBox" style="margin-top:10px">
+      <video id="qrVideo" playsinline muted></video>
+      <canvas id="qrCanvas" hidden></canvas>
+      <div id="qrResult">
+        <b id="qrPointId">—</b>
+        <div id="qrCoordinates" class="ltr small"></div>
+        <div id="qrUtm" class="ltr small"></div>
+        <div id="qrHeight" class="ltr small"></div>
+      </div>
+      <div class="toolbar">
+        <button id="startQr" class="primary">شروع اسکن QR با دوربین</button>
+        <button id="stopQr" disabled>توقف دوربین</button>
+        <button id="applyQr" class="success" disabled>تأیید QR و ارسال موقعیت</button>
+        <button id="cancelQr" disabled>لغو نقطه QR</button>
+      </div>
+      <input id="qrImageInput" class="hiddenInput" type="file" accept="image/*">
+      <button id="scanQrImage" style="margin-top:8px">اسکن QR از تصویر ذخیره‌شده</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>۵) ارسال یک مختصات دستی</h2>
     <div class="grid">
-      <div>
-        <label>Position Mode</label>
-        <select id="positionMode">
-          <option value="gps">Outdoor GPS</option>
-          <option value="indoor">Indoor NCC</option>
-        </select>
-      </div>
-
-      <div>
-        <label>Heading (deg)</label>
-        <input id="manualHeading" type="number" min="0" max="359.9" step="1" value="0">
-      </div>
+      <label>Latitude<input id="manualLat" type="number" step="any"></label>
+      <label>Longitude<input id="manualLon" type="number" step="any"></label>
+      <label>Altitude/H اختیاری<input id="manualAlt" type="number" step="any"></label>
+      <label>Accuracy اختیاری<input id="manualAcc" type="number" min="0" step="any"></label>
     </div>
-
-    <div id="gpsPanel" style="margin-top:12px">
-      <h2>Outdoor GPS</h2>
-
-      <div class="row"><span>Latitude</span><span id="lat" class="ltr">-</span></div>
-      <div class="row"><span>Longitude</span><span id="lon" class="ltr">-</span></div>
-      <div class="row"><span>Accuracy</span><span id="accuracy" class="ltr">-</span></div>
-      <div class="row"><span>Altitude</span><span id="altitude" class="ltr">-</span></div>
-      <div class="row"><span>Altitude Accuracy</span><span id="altitudeAccuracy" class="ltr">-</span></div>
-      <div class="row"><span>Speed</span><span id="speed" class="ltr">-</span></div>
-      <div class="row"><span>Heading</span><span id="heading" class="ltr">-</span></div>
-
-      <button id="enableGps" style="margin-top:10px">فعال‌کردن GPS</button>
-    </div>
-
-    <div id="indoorPanel" style="display:none;margin-top:12px">
-      <h2>Indoor NCC</h2>
-
-      <div class="grid">
-        <div>
-          <label>Model X (m)</label>
-          <input id="modelX" type="number" step="0.1" value="0">
-        </div>
-
-        <div>
-          <label>Model Z (m)</label>
-          <input id="modelZ" type="number" step="0.1" value="0">
-        </div>
-
-        <div>
-          <label>Step (m)</label>
-          <input id="indoorStep" type="number" min="0.1" max="20" step="0.1" value="1">
-        </div>
-
-        <div>
-          <label>Floor</label>
-          <select id="indoorFloor">
-            <option value="F00">F00</option>
-            <option value="F01">F01</option>
-            <option value="F02" selected>F02</option>
-            <option value="F03">F03</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="grid" style="margin-top:10px">
-        <button id="moveForward">حرکت رو به جلو</button>
-        <button id="moveBackward">حرکت به عقب</button>
-        <button id="moveLeft">حرکت به چپ</button>
-        <button id="moveRight">حرکت به راست</button>
-      </div>
-
-      <div class="muted" style="margin-top:8px">
-        در این مرحله مختصات Indoor به‌صورت دستی/آزمایشی است. بعداً PDR/IMU همین model_x و model_z را تولید می‌کند.
-      </div>
-    </div>
-
-    <div class="row" style="margin-top:12px"><span>Last Send</span><span id="lastSend" class="ltr">-</span></div>
-
-    <div class="grid" style="margin-top:12px">
-      <button id="sendOnce" class="primary">ارسال یک موقعیت</button>
-      <button id="startLive" class="primary">شروع ارسال زنده</button>
-      <button id="stopLive" class="danger" disabled>توقف ارسال زنده</button>
-    </div>
+    <button id="sendManual" style="margin-top:10px">ارسال فقط همین نقطه</button>
   </section>
 
   <section class="card">
     <h2>وضعیت ارسال</h2>
-    <div id="relayStatus">Relay: آماده تست</div>
+    <div class="kpi">
+      <div><b id="sentCount">0</b><small>ارسال موفق</small></div>
+      <div><b id="errorCount">0</b><small>خطا</small></div>
+      <div><b id="sequence">0</b><small>Sequence</small></div>
+      <div><b id="lastSend">—</b><small>آخرین ارسال</small></div>
+    </div>
+    <p id="relayStatus">Relay: آماده</p>
     <div id="log"></div>
   </section>
 </main>
 
 <script>
 const $ = id => document.getElementById(id);
-
 const NTFY_BASE = 'https://ntfy.sh';
-
-/*
- * Keep the public pilot below aggressive request rates.
- * Later, NCC's own relay can run at a higher frequency.
- */
-const LIVE_INTERVAL_MS = 6000;
+const PROFILE_KEY = 'ncc_mobile_profile_stage104';
+const DEVICE_KEY = 'ncc_mobile_device_stage90';
+const SESSION_KEY = 'ncc_mobile_session_stage90';
+const PHOTO_KEY = 'ncc_mobile_photo_stage104';
+const MAX_RELAY_PHOTO_DATA_URL_CHARS = 2400;
 
 let watchId = null;
-let lastGpsPosition = null;
+let latestGps = null;
 let liveEnabled = false;
 let liveTimer = null;
+let lastLiveSentAt = 0;
+let deviceHeading = null;
+let sentCount = 0;
+let errorCount = 0;
+let sequence = 0;
+let qrStream = null;
+let qrLoopActive = false;
+let qrDetector = null;
+let scannedQrPoint = null;
+let userPhotoDataUrl = null;
 
 function log(text) {
-  const t = new Date().toLocaleTimeString();
-  $('log').textContent = `[${t}] ${text}\n` + $('log').textContent;
+  const stamp = new Date().toLocaleTimeString();
+  $('log').textContent = `[${stamp}] ${text}\n` + $('log').textContent.slice(0, 9000);
 }
+function cleanTopic(value) { return value.trim().replace(/[^A-Za-z0-9_-]/g, ''); }
+function numberOrNull(value) { const n = Number(value); return Number.isFinite(n) ? n : null; }
+function normalizeHeading(value) { const n = Number(value); return Number.isFinite(n) ? ((n % 360) + 360) % 360 : 0; }
+function randomId(prefix) { return `${prefix}_${crypto.randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase()}`; }
+function deviceId() { let value = localStorage.getItem(DEVICE_KEY); if (!value) { value = randomId('WEB'); localStorage.setItem(DEVICE_KEY, value); } return value; }
+function defaultUserId() { return `PHONE_${deviceId().split('_').at(-1)}`; }
 
-function cleanTopic(value) {
-  return value.trim().replace(/[^A-Za-z0-9_-]/g, '');
-}
-
-function numberOrNull(value) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
-}
-
-function normalizeHeading(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return 0;
-  return ((n % 360) + 360) % 360;
+function avatarFallback() {
+  const explicit = $('avatarId').value.trim();
+  if (explicit) return explicit;
+  if (userPhotoDataUrl) return 'photo-avatar';
+  const g = $('gender').value;
+  return g === 'female' ? 'avatar_female_01' : g === 'male' ? 'avatar_male_01' : 'avatar_generic_01';
 }
 
 function profile() {
   return {
-    user_id: $('userId').value.trim() || 'PHONE_001',
+    user_id: $('userId').value.trim() || defaultUserId(),
     label: $('label').value.trim() || 'Mobile User',
-    avatar_id: $('avatarId').value,
-    height_cm: Number($('heightCm').value) || 175,
-    weight_kg: Number($('weightKg').value) || null,
+    gender: $('gender').value,
     role: $('role').value,
-    floor_id:
-      $('positionMode').value === 'indoor'
-        ? $('indoorFloor').value
-        : null,
+    avatar_id: $('avatarId').value.trim() || null,
+    height_cm: numberOrNull($('heightCm').value),
+    weight_kg: numberOrNull($('weightKg').value),
+    floor_id: $('floorId').value.trim() || null,
+    device_id: deviceId(),
+    session_id: deviceId(),
   };
 }
 
 function saveProfile() {
-  const data = {
+  localStorage.setItem(PROFILE_KEY, JSON.stringify({
     ...profile(),
-    session_code: $('sessionCode').value.trim(),
-    position_mode: $('positionMode').value,
-    model_x: numberOrNull($('modelX').value),
-    model_z: numberOrNull($('modelZ').value),
     manual_heading: normalizeHeading($('manualHeading').value),
-  };
-
-  localStorage.setItem(
-    'ncc_mobile_profile_v2',
-    JSON.stringify(data),
-  );
-
+    interval: Number($('interval').value) || 6,
+    accuracy_warn: Number($('accuracyWarn').value) || 50,
+  }));
   log('PROFILE SAVED');
 }
 
 function loadProfile() {
-  try {
-    const data = JSON.parse(
-      localStorage.getItem('ncc_mobile_profile_v2')
-      || localStorage.getItem('ncc_mobile_profile_v1')
-      || 'null'
-    );
+  let data = {};
+  try { data = JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}'); } catch {}
+  $('userId').value = data.user_id || defaultUserId();
+  $('label').value = data.label || 'Mobile User';
+  $('gender').value = data.gender || 'unknown';
+  $('role').value = data.role || 'visitor';
+  $('avatarId').value = data.avatar_id || '';
+  $('heightCm').value = data.height_cm ?? 175;
+  $('weightKg').value = data.weight_kg ?? 75;
+  $('floorId').value = data.floor_id || '';
+  $('manualHeading').value = data.manual_heading ?? 0;
+  $('interval').value = String(data.interval || 6);
+  $('accuracyWarn').value = data.accuracy_warn ?? 50;
 
-    if (!data) return;
+  userPhotoDataUrl = localStorage.getItem(PHOTO_KEY) || null;
+  updatePhotoPreview();
 
-    $('userId').value = data.user_id ?? 'PHONE_001';
-    $('label').value = data.label ?? 'User 1';
-    $('avatarId').value = data.avatar_id ?? 'avatar_male_01';
-    $('heightCm').value = data.height_cm ?? 175;
-    $('weightKg').value = data.weight_kg ?? 75;
-    $('role').value = data.role ?? 'visitor';
-    $('sessionCode').value = data.session_code ?? '';
-    $('positionMode').value = data.position_mode ?? 'gps';
-    $('modelX').value = data.model_x ?? 0;
-    $('modelZ').value = data.model_z ?? 0;
-    $('manualHeading').value = data.manual_heading ?? 0;
+  const query = new URLSearchParams(location.search);
+  const querySession = cleanTopic(query.get('session') || '');
+  const storedSession = sessionStorage.getItem(SESSION_KEY) || '';
+  if (querySession.length >= 20) {
+    $('sessionCode').value = querySession;
+    sessionStorage.setItem(SESSION_KEY, querySession);
+  } else if (storedSession) {
+    $('sessionCode').value = storedSession;
+  }
 
-    if (data.floor_id && /^F0[0-3]$/.test(data.floor_id)) {
-      $('indoorFloor').value = data.floor_id;
-    }
-  } catch (_) {}
+  // QR may be opened by the normal phone camera outside this page.
+  const qrPoint = parseQrUrl(location.href);
+  if (qrPoint) {
+    setQrCandidate(qrPoint);
+    const clean = new URL(location.href);
+    for (const key of ['nccqr','id','lon','lat','e','n','h','epsg','floor']) clean.searchParams.delete(key);
+    history.replaceState(null, '', clean.pathname + clean.search + clean.hash);
+  } else if (querySession.length >= 20) {
+    const clean = new URL(location.href);
+    clean.searchParams.delete('session');
+    history.replaceState(null, '', clean.pathname + clean.search + clean.hash);
+  }
 
   updateAvatarPreview();
-  updateModeUi();
 }
 
 function updateAvatarPreview() {
-  $('avatarLabel').textContent = `${$('avatarId').value}.glb`;
-  $('heightPreview').textContent =
-    `Target height: ${Number($('heightCm').value) || 175} cm`;
+  $('avatarPreview').textContent = `Avatar: ${avatarFallback()}`;
 }
 
-function showGpsPosition(pos) {
-  const c = pos.coords;
-
-  $('lat').textContent = c.latitude.toFixed(8);
-  $('lon').textContent = c.longitude.toFixed(8);
-  $('accuracy').textContent = `${c.accuracy.toFixed(1)} m`;
-  $('altitude').textContent =
-    c.altitude == null ? '-' : `${c.altitude.toFixed(1)} m`;
-
-  $('altitudeAccuracy').textContent =
-    c.altitudeAccuracy == null
-      ? '-'
-      : `${c.altitudeAccuracy.toFixed(1)} m`;
-
-  $('speed').textContent =
-    c.speed == null ? '-' : `${c.speed.toFixed(2)} m/s`;
-  $('heading').textContent =
-    c.heading == null ? '-' : `${c.heading.toFixed(1)}°`;
-
-  if (c.heading != null && Number.isFinite(c.heading)) {
-    $('manualHeading').value = c.heading.toFixed(1);
-  }
+function updatePhotoPreview() {
+  const has = Boolean(userPhotoDataUrl);
+  $('photoPreview').hidden = !has;
+  $('avatarIcon').style.display = has ? 'none' : 'grid';
+  $('sendPhoto').disabled = !has;
+  $('clearPhoto').disabled = !has;
+  if (has) $('photoPreview').src = userPhotoDataUrl;
+  updateAvatarPreview();
 }
 
-function buildMessage() {
-  const mode = $('positionMode').value;
+function showPosition(coords, source, label = '') {
+  $('lat').textContent = Number(coords.latitude).toFixed(8);
+  $('lon').textContent = Number(coords.longitude).toFixed(8);
+  $('accuracy').textContent = Number.isFinite(Number(coords.accuracy)) ? `${Number(coords.accuracy).toFixed(2)} m` : 'fixed anchor';
+  const alt = coords.display_altitude ?? coords.altitude;
+  $('altitude').textContent = Number.isFinite(Number(alt)) ? `${Number(alt).toFixed(3)} m` : '-';
+  $('speed').textContent = coords.speed == null ? '-' : `${Number(coords.speed).toFixed(2)} m/s`;
+  const h = Number.isFinite(Number(coords.heading))
+    ? normalizeHeading(coords.heading)
+    : (Number.isFinite(deviceHeading) ? deviceHeading : normalizeHeading($('manualHeading').value));
+  $('heading').textContent = `${h.toFixed(1)}°`;
+  $('positionSource').textContent = `Position: ${source}${label ? ` · ${label}` : ''}`;
+  $('positionSource').className = 'pill ok';
+}
+
+function showGps(pos) {
+  latestGps = pos;
+  showPosition(pos.coords, 'GPS');
+  const warn = Number($('accuracyWarn').value) || 50;
+  $('accuracy').className = Number(pos.coords.accuracy) > warn ? 'ltr warn' : 'ltr ok';
+}
+
+function buildMessage(coords, source='gps', extra={}) {
   const p = profile();
-
-  let position;
-
-  if (mode === 'gps') {
-    if (!lastGpsPosition) {
-      throw new Error('GPS position is not available.');
-    }
-
-    const c = lastGpsPosition.coords;
-
-    position = {
-      source: 'gps',
-
-      latitude:
-        c.latitude,
-
-      longitude:
-        c.longitude,
-
-      altitude:
-        numberOrNull(
-          c.altitude
-        ),
-
-      altitude_accuracy_m:
-        numberOrNull(
-          c.altitudeAccuracy
-        ),
-
-      accuracy_m:
-        numberOrNull(
-          c.accuracy
-        ),
-
-      speed_mps:
-        numberOrNull(
-          c.speed
-        ),
-
-      heading_deg:
-        c.heading == null
-          ? normalizeHeading(
-              $('manualHeading').value
-            )
-          : normalizeHeading(
-              c.heading
-            ),
-    };
-
-  } else {
-    const modelX = Number($('modelX').value);
-    const modelZ = Number($('modelZ').value);
-
-    if (!Number.isFinite(modelX) || !Number.isFinite(modelZ)) {
-      throw new Error('Indoor model_x/model_z are invalid.');
-    }
-
-    position = {
-      source: 'indoor',
-      model_x: modelX,
-      model_z: modelZ,
-      heading_deg: normalizeHeading($('manualHeading').value),
-    };
-  }
-
+  const heading = Number.isFinite(Number(coords.heading))
+    ? normalizeHeading(coords.heading)
+    : (Number.isFinite(deviceHeading) ? deviceHeading : normalizeHeading($('manualHeading').value));
+  sequence += 1;
+  $('sequence').textContent = sequence;
   return {
     type: 'ncc_live_position',
-    schema_version: 2,
-    position_mode: mode,
+    schema_version: 4,
+    position_mode: source,
+    sequence,
     profile: p,
-    position,
+    position: {
+      source,
+      latitude: numberOrNull(coords.latitude),
+      longitude: numberOrNull(coords.longitude),
+      altitude: source === 'qr' ? null : numberOrNull(coords.altitude),
+      display_altitude: numberOrNull(coords.display_altitude ?? extra.display_altitude),
+      altitude_accuracy_m: numberOrNull(coords.altitudeAccuracy),
+      accuracy_m: source === 'qr' ? null : numberOrNull(coords.accuracy),
+      speed_mps: source === 'qr' ? 0 : numberOrNull(coords.speed),
+      heading_deg: heading,
+      utm_easting: numberOrNull(coords.utm_easting ?? extra.utm_easting),
+      utm_northing: numberOrNull(coords.utm_northing ?? extra.utm_northing),
+      qr_point_id: extra.qr_point_id || null,
+      qr_epsg: numberOrNull(extra.qr_epsg),
+    },
+    device_id: p.device_id,
+    session_id: p.session_id,
     client_timestamp_ms: Date.now(),
     client_timestamp: new Date().toISOString(),
   };
 }
 
-async function publishCurrentPosition() {
+async function relayPost(message) {
   const topic = cleanTopic($('sessionCode').value);
-
-  if (topic.length < 20) {
-    throw new Error('Session Code معتبر نیست یا خیلی کوتاه است.');
-  }
-
-  const message = buildMessage();
-
-  const response = await fetch(
-    `${NTFY_BASE}/${encodeURIComponent(topic)}`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/plain;charset=UTF-8',
-      },
-      body: JSON.stringify(message),
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error(`Relay HTTP ${response.status}`);
-  }
-
+  if (topic.length < 20) throw new Error('Session Code معتبر نیست یا خیلی کوتاه است.');
+  sessionStorage.setItem(SESSION_KEY, topic);
+  const body = JSON.stringify(message);
+  if (body.length > 3900) throw new Error(`پیام برای Relay بزرگ است (${body.length} chars).`);
+  const response = await fetch(`${NTFY_BASE}/${encodeURIComponent(topic)}`, {
+    method: 'POST',
+    headers: {'Content-Type':'text/plain;charset=UTF-8'},
+    body,
+    cache: 'no-store',
+  });
+  if (!response.ok) throw new Error(`Relay HTTP ${response.status}`);
+  sentCount += 1;
+  $('sentCount').textContent = sentCount;
   $('lastSend').textContent = new Date().toLocaleTimeString();
+  return body.length;
+}
 
-  $('relayStatus').textContent =
-    `Relay: ارسال موفق | ${message.position_mode}`;
-
+async function publish(coords, source='gps', extra={}) {
+  const message = buildMessage(coords, source, extra);
+  if (!Number.isFinite(message.position.latitude) || !Number.isFinite(message.position.longitude)) {
+    throw new Error('Latitude/Longitude معتبر نیست.');
+  }
+  await relayPost(message);
+  $('relayStatus').textContent = `Relay: موقعیت ارسال شد · ${message.profile.user_id} · ${source} · seq ${message.sequence}`;
   $('relayStatus').className = 'ok';
-
-  log(
-    `POSITION SENT | ${message.profile.user_id} | `
-    + `${message.position_mode}`
-  );
+  log(`POSITION ${source} user=${message.profile.user_id} lat=${message.position.latitude} lon=${message.position.longitude}`);
 }
 
-function onGpsPosition(pos) {
-  lastGpsPosition = pos;
-  showGpsPosition(pos);
-
-  if (liveEnabled && $('positionMode').value === 'gps') {
-    // Live timer performs the actual transmission.
-  }
-}
-
-function onGpsError(err) {
-  log(`GPS ERROR ${err.code}: ${err.message}`);
-}
-
-function enableGps() {
-  if (!window.isSecureContext) {
-    log('Secure Context لازم است. صفحه باید با HTTPS باز شود.');
-    return;
-  }
-
-  if (!navigator.geolocation) {
-    log('Geolocation API در این مرورگر وجود ندارد.');
-    return;
-  }
-
-  if (watchId !== null) return;
-
-  watchId = navigator.geolocation.watchPosition(
-    onGpsPosition,
-    onGpsError,
-    {
-      enableHighAccuracy: true,
-      maximumAge: 0,
-      timeout: 15000,
+async function publishPhoto() {
+  if (!userPhotoDataUrl) throw new Error('ابتدا عکس بگیرید.');
+  const p = profile();
+  const message = {
+    type: 'ncc_user_photo',
+    schema_version: 1,
+    profile: p,
+    photo: {
+      data_url: userPhotoDataUrl,
+      captured_at: new Date().toISOString(),
     },
-  );
+    device_id: p.device_id,
+    session_id: p.session_id,
+    client_timestamp_ms: Date.now(),
+  };
+  const size = await relayPost(message);
+  $('relayStatus').textContent = `Relay: عکس Avatar ارسال شد · ${p.user_id}`;
+  $('relayStatus').className = 'ok';
+  log(`PHOTO SENT user=${p.user_id} messageChars=${size}`);
+}
 
+function reportError(prefix, error) {
+  errorCount += 1;
+  $('errorCount').textContent = errorCount;
+  $('relayStatus').textContent = `${prefix}: ${error.message || error}`;
+  $('relayStatus').className = 'bad';
+  log(`${prefix}: ${error.message || error}`);
+}
+
+// ------------------------------
+// Photo capture/compression
+// ------------------------------
+async function fileToImage(file) {
+  if ('createImageBitmap' in window) {
+    try { return await createImageBitmap(file); } catch {}
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = url;
+    });
+    return img;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function compressFacePhoto(file) {
+  const image = await fileToImage(file);
+  const iw = image.width || image.naturalWidth;
+  const ih = image.height || image.naturalHeight;
+  const side = Math.min(iw, ih);
+  const sx = (iw - side) / 2;
+  const sy = (ih - side) / 2;
+  const sizes = [80, 72, 64, 56, 48];
+  const qualities = [0.72, 0.62, 0.52, 0.42];
+
+  let best = null;
+  for (const size of sizes) {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d', {alpha:false});
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, size, size);
+    ctx.drawImage(image, sx, sy, side, side, 0, 0, size, size);
+    for (const q of qualities) {
+      const url = canvas.toDataURL('image/jpeg', q);
+      best = url;
+      if (url.length <= MAX_RELAY_PHOTO_DATA_URL_CHARS) {
+        image.close?.();
+        return url;
+      }
+    }
+  }
+  image.close?.();
+  return best;
+}
+
+$('takePhoto').onclick = () => $('photoInput').click();
+$('photoInput').onchange = async event => {
+  try {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    userPhotoDataUrl = await compressFacePhoto(file);
+    if (!userPhotoDataUrl || userPhotoDataUrl.length > 3000) {
+      throw new Error('فشرده‌سازی عکس برای Relay کافی نبود.');
+    }
+    localStorage.setItem(PHOTO_KEY, userPhotoDataUrl);
+    updatePhotoPreview();
+    log(`PHOTO READY chars=${userPhotoDataUrl.length}`);
+  } catch (e) {
+    reportError('PHOTO', e);
+  } finally {
+    event.target.value = '';
+  }
+};
+$('sendPhoto').onclick = () => publishPhoto().catch(e => reportError('PHOTO SEND', e));
+$('clearPhoto').onclick = () => {
+  userPhotoDataUrl = null;
+  localStorage.removeItem(PHOTO_KEY);
+  updatePhotoPreview();
+  log('LOCAL PHOTO CLEARED');
+};
+
+// ------------------------------
+// QR parsing/scanning
+// ------------------------------
+function pointFromParams(params) {
+  if (params.get('nccqr') !== '1') return null;
+  const point = {
+    point_id: params.get('id') || 'NCC_QR',
+    longitude: Number(params.get('lon')),
+    latitude: Number(params.get('lat')),
+    utm_easting: Number(params.get('e')),
+    utm_northing: Number(params.get('n')),
+    height_m: Number(params.get('h')),
+    epsg: Number(params.get('epsg') || 32639),
+    floor_id: params.get('floor') || null,
+  };
+  if (!Number.isFinite(point.longitude) || !Number.isFinite(point.latitude)) return null;
+  return point;
+}
+
+function parseQrUrl(text) {
+  try {
+    const url = new URL(text, location.href);
+    return pointFromParams(url.searchParams);
+  } catch {
+    return null;
+  }
+}
+
+function parseQrPayload(text) {
+  const fromUrl = parseQrUrl(text);
+  if (fromUrl) return fromUrl;
+
+  try {
+    const data = JSON.parse(text);
+    if (data?.type === 'ncc_qr_position' || data?.point_id) {
+      const point = {
+        point_id: data.point_id || 'NCC_QR',
+        longitude: Number(data.longitude),
+        latitude: Number(data.latitude),
+        utm_easting: Number(data.utm_easting),
+        utm_northing: Number(data.utm_northing),
+        height_m: Number(data.height_m ?? data.display_altitude),
+        epsg: Number(data.epsg || 32639),
+        floor_id: data.floor_id || null,
+      };
+      if (Number.isFinite(point.longitude) && Number.isFinite(point.latitude)) return point;
+    }
+  } catch {}
+
+  if (String(text).startsWith('NCCQR|')) {
+    const parts = String(text).split('|');
+    const point = {
+      point_id: parts[2] || 'NCC_QR',
+      longitude: Number(parts[3]),
+      latitude: Number(parts[4]),
+      utm_easting: Number(parts[5]),
+      utm_northing: Number(parts[6]),
+      height_m: Number(parts[7]),
+      epsg: Number(parts[8] || 32639),
+      floor_id: parts[9] || null,
+    };
+    if (Number.isFinite(point.longitude) && Number.isFinite(point.latitude)) return point;
+  }
+  return null;
+}
+
+function setQrCandidate(point) {
+  scannedQrPoint = point;
+  $('qrResult').style.display = 'block';
+  $('qrPointId').textContent = point.point_id;
+  $('qrCoordinates').textContent = `Lon ${point.longitude.toFixed(7)} · Lat ${point.latitude.toFixed(7)}`;
+  $('qrUtm').textContent = Number.isFinite(point.utm_easting)
+    ? `UTM ${point.epsg || 32639} · E ${point.utm_easting.toFixed(3)} · N ${point.utm_northing.toFixed(3)}`
+    : 'UTM: —';
+  $('qrHeight').textContent = Number.isFinite(point.height_m) ? `H ${point.height_m.toFixed(3)} m` : 'H —';
+  $('applyQr').disabled = false;
+  $('cancelQr').disabled = false;
+  $('positionSource').textContent = `Position: QR آماده · ${point.point_id}`;
+  $('positionSource').className = 'pill warn';
+  log(`QR DETECTED ${point.point_id}`);
+}
+
+function clearQrCandidate() {
+  scannedQrPoint = null;
+  $('qrResult').style.display = 'none';
+  $('applyQr').disabled = true;
+  $('cancelQr').disabled = true;
+}
+
+async function ensureJsQr() {
+  if (window.jsQR) return window.jsQR;
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('بارگذاری QR fallback ناموفق بود.'));
+    document.head.appendChild(s);
+  });
+  return window.jsQR;
+}
+
+async function detectQrFromCanvas(canvas) {
+  if ('BarcodeDetector' in window) {
+    try {
+      qrDetector ||= new BarcodeDetector({formats:['qr_code']});
+      const found = await qrDetector.detect(canvas);
+      if (found?.[0]?.rawValue) return found[0].rawValue;
+    } catch {}
+  }
+  const jsQR = await ensureJsQr();
+  const ctx = canvas.getContext('2d', {willReadFrequently:true});
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return jsQR(image.data, image.width, image.height)?.data || null;
+}
+
+async function qrLoop() {
+  if (!qrLoopActive || !qrStream) return;
+  try {
+    const video = $('qrVideo');
+    if (video.readyState >= 2 && video.videoWidth > 0) {
+      const scale = Math.min(1, 720 / video.videoWidth);
+      const canvas = $('qrCanvas');
+      canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+      canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+      canvas.getContext('2d', {willReadFrequently:true}).drawImage(video, 0, 0, canvas.width, canvas.height);
+      const text = await detectQrFromCanvas(canvas);
+      if (text) {
+        const point = parseQrPayload(text);
+        if (point) {
+          setQrCandidate(point);
+          stopQrScanner();
+          return;
+        }
+      }
+    }
+  } catch (e) {
+    console.debug('QR scan', e);
+  }
+  if (qrLoopActive) setTimeout(qrLoop, 180);
+}
+
+async function startQrScanner() {
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    throw new Error('اسکن دوربین نیاز به HTTPS و Camera API دارد.');
+  }
+  stopLive();
+  stopQrScanner();
+  qrStream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: {ideal:'environment'},
+      width: {ideal:1280},
+      height: {ideal:720},
+    },
+    audio:false,
+  });
+  const video = $('qrVideo');
+  video.srcObject = qrStream;
+  video.style.display = 'block';
+  await video.play();
+  qrLoopActive = true;
+  $('startQr').disabled = true;
+  $('stopQr').disabled = false;
+  $('positionSource').textContent = 'Position: QR scanning…';
+  qrLoop();
+}
+
+function stopQrScanner() {
+  qrLoopActive = false;
+  qrStream?.getTracks?.().forEach(t => t.stop());
+  qrStream = null;
+  const video = $('qrVideo');
+  video.pause?.();
+  video.srcObject = null;
+  video.style.display = 'none';
+  $('startQr').disabled = false;
+  $('stopQr').disabled = true;
+}
+
+async function applyQrPoint() {
+  if (!scannedQrPoint) throw new Error('ابتدا QR را اسکن کنید.');
+  stopLive();
+  stopQrScanner();
+  const p = scannedQrPoint;
+  if (p.floor_id) $('floorId').value = p.floor_id;
+  const coords = {
+    latitude: p.latitude,
+    longitude: p.longitude,
+    display_altitude: Number.isFinite(p.height_m) ? p.height_m : null,
+    utm_easting: p.utm_easting,
+    utm_northing: p.utm_northing,
+    speed: 0,
+    heading: Number.isFinite(deviceHeading) ? deviceHeading : Number($('manualHeading').value),
+  };
+  showPosition(coords, 'QR', p.point_id);
+  await publish(coords, 'qr', {
+    display_altitude: p.height_m,
+    utm_easting: p.utm_easting,
+    utm_northing: p.utm_northing,
+    qr_point_id: p.point_id,
+    qr_epsg: p.epsg,
+  });
+  $('relayStatus').textContent = `QR: ${p.point_id} به‌عنوان موقعیت فعلی ارسال شد.`;
+  $('relayStatus').className = 'ok';
+}
+
+$('startQr').onclick = () => startQrScanner().catch(e => reportError('QR CAMERA', e));
+$('stopQr').onclick = stopQrScanner;
+$('applyQr').onclick = () => applyQrPoint().catch(e => reportError('QR SEND', e));
+$('cancelQr').onclick = clearQrCandidate;
+$('scanQrImage').onclick = () => $('qrImageInput').click();
+$('qrImageInput').onchange = async event => {
+  try {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const bitmap = await fileToImage(file);
+    const canvas = $('qrCanvas');
+    const iw = bitmap.width || bitmap.naturalWidth;
+    const ih = bitmap.height || bitmap.naturalHeight;
+    const scale = Math.min(1, 1000 / iw);
+    canvas.width = Math.round(iw * scale);
+    canvas.height = Math.round(ih * scale);
+    canvas.getContext('2d', {willReadFrequently:true}).drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
+    const text = await detectQrFromCanvas(canvas);
+    if (!text) throw new Error('QR در تصویر شناسایی نشد.');
+    const point = parseQrPayload(text);
+    if (!point) throw new Error('این QR متعلق به نقاط NCC نیست.');
+    setQrCandidate(point);
+  } catch (e) {
+    reportError('QR IMAGE', e);
+  } finally {
+    event.target.value = '';
+  }
+};
+
+// ------------------------------
+// GPS
+// ------------------------------
+function gpsOptions(){ return {enableHighAccuracy:true,maximumAge:0,timeout:20000}; }
+function onGps(pos){ showGps(pos); }
+function onGpsError(error){ reportError('GPS', error); }
+
+async function requestOrientation() {
+  try {
+    if (typeof window.DeviceOrientationEvent?.requestPermission === 'function') {
+      const result = await window.DeviceOrientationEvent.requestPermission();
+      if (result !== 'granted') throw new Error('Device orientation permission denied');
+    }
+    addEventListener('deviceorientationabsolute', event => {
+      const webkit = Number(event.webkitCompassHeading);
+      const alpha = Number(event.alpha);
+      const value = Number.isFinite(webkit) ? webkit : (Number.isFinite(alpha) ? normalizeHeading(360-alpha) : null);
+      if (Number.isFinite(value)) {
+        deviceHeading = normalizeHeading(value);
+        $('deviceHeading').textContent = `${deviceHeading.toFixed(1)}°`;
+      }
+    }, {passive:true});
+  } catch (error) {
+    log(`HEADING: ${error.message || error}`);
+  }
+}
+
+async function enableSensors() {
+  if (!window.isSecureContext) { reportError('SECURE', new Error('GPS مرورگر نیاز به HTTPS دارد.')); return; }
+  if (!navigator.geolocation) { reportError('GPS', new Error('Geolocation API وجود ندارد.')); return; }
+  await requestOrientation();
+  if (watchId === null) watchId = navigator.geolocation.watchPosition(onGps, onGpsError, gpsOptions());
   $('enableGps').disabled = true;
   log('GPS WATCH STARTED');
 }
 
-function updateModeUi() {
-  const indoor = $('positionMode').value === 'indoor';
-
-  $('gpsPanel').style.display = indoor ? 'none' : 'block';
-  $('indoorPanel').style.display = indoor ? 'block' : 'none';
-
-  if (indoor) {
-    log('POSITION MODE: INDOOR NCC');
-  } else {
-    log('POSITION MODE: OUTDOOR GPS');
-  }
-}
-
-function moveIndoor(forwardM, rightM) {
-  const x = Number($('modelX').value) || 0;
-  const z = Number($('modelZ').value) || 0;
-  const headingDeg = normalizeHeading($('manualHeading').value);
-  const heading = headingDeg * Math.PI / 180;
-
-  /*
-   * Local NCC test movement:
-   * heading=0 -> +Z
-   * heading=90 -> +X
-   */
-  const dx =
-    Math.sin(heading) * forwardM
-    + Math.cos(heading) * rightM;
-
-  const dz =
-    Math.cos(heading) * forwardM
-    - Math.sin(heading) * rightM;
-
-  $('modelX').value = (x + dx).toFixed(3);
-  $('modelZ').value = (z + dz).toFixed(3);
-
-  if (liveEnabled) {
-    publishCurrentPosition()
-      .catch(err => log(`SEND ERROR: ${err.message}`));
-  }
-}
-
 function startLive() {
   if (liveEnabled) return;
-
+  if (!window.isSecureContext || !navigator.geolocation) {
+    reportError('GPS', new Error('HTTPS/GPS لازم است.'));
+    return;
+  }
+  clearQrCandidate();
   liveEnabled = true;
-
   $('startLive').disabled = true;
   $('stopLive').disabled = false;
-
-  publishCurrentPosition()
-    .catch(err => log(`SEND ERROR: ${err.message}`));
-
-  liveTimer = setInterval(
-    () => {
-      publishCurrentPosition()
-        .catch(err => {
-          $('relayStatus').textContent =
-            `Relay: خطا — ${err.message}`;
-          $('relayStatus').className = 'bad';
-          log(`SEND ERROR: ${err.message}`);
-        });
-    },
-    LIVE_INTERVAL_MS,
-  );
-
-  log(`LIVE SEND STARTED | ${LIVE_INTERVAL_MS / 1000}s`);
+  enableSensors();
+  const sendLatest = async () => {
+    if (!liveEnabled || !latestGps) return;
+    const intervalMs = Math.max(3000,(Number($('interval').value)||6)*1000);
+    if (Date.now()-lastLiveSentAt < intervalMs-250) return;
+    lastLiveSentAt = Date.now();
+    try { await publish(latestGps.coords,'gps'); } catch(e){ reportError('SEND',e); }
+  };
+  sendLatest();
+  liveTimer = setInterval(sendLatest,1000);
+  log('LIVE GPS TRACK STARTED');
 }
 
 function stopLive() {
   liveEnabled = false;
-
-  if (liveTimer !== null) {
-    clearInterval(liveTimer);
-    liveTimer = null;
-  }
-
+  if (liveTimer !== null) clearInterval(liveTimer);
+  liveTimer = null;
   $('startLive').disabled = false;
   $('stopLive').disabled = true;
-
-  log('LIVE SEND STOPPED');
 }
 
-$('saveProfile').addEventListener('click', saveProfile);
-$('enableGps').addEventListener('click', enableGps);
+async function gpsOnce() {
+  if (!window.isSecureContext || !navigator.geolocation) throw new Error('HTTPS/GPS لازم است.');
+  clearQrCandidate();
+  await requestOrientation();
+  navigator.geolocation.getCurrentPosition(async pos => {
+    showGps(pos);
+    try { await publish(pos.coords,'gps'); } catch(e){ reportError('SEND',e); }
+  }, onGpsError, gpsOptions());
+}
 
-$('sendOnce').addEventListener(
-  'click',
-  () => publishCurrentPosition()
-    .catch(err => log(`SEND ERROR: ${err.message}`)),
-);
+async function permissionStatus(){
+  try {
+    if (!navigator.permissions) throw 0;
+    const p=await navigator.permissions.query({name:'geolocation'});
+    $('gpsPermission').textContent=`GPS Permission: ${p.state}`;
+    p.onchange=()=>{$('gpsPermission').textContent=`GPS Permission: ${p.state}`;};
+  } catch {
+    $('gpsPermission').textContent='GPS Permission: browser-controlled';
+  }
+}
 
-$('startLive').addEventListener('click', startLive);
-$('stopLive').addEventListener('click', stopLive);
+function updateNetwork(){
+  const online=navigator.onLine;
+  $('network').textContent=`Network: ${online?'online':'offline'}`;
+  $('network').className=`pill ${online?'ok':'bad'}`;
+}
 
-$('avatarId').addEventListener('change', updateAvatarPreview);
-$('heightCm').addEventListener('input', updateAvatarPreview);
-
-$('positionMode').addEventListener(
-  'change',
-  () => {
+$('saveProfile').onclick = saveProfile;
+$('gender').onchange = updateAvatarPreview;
+$('avatarId').oninput = updateAvatarPreview;
+$('enableGps').onclick = enableSensors;
+$('gpsOnce').onclick = () => gpsOnce().catch(e=>reportError('GPS',e));
+$('startLive').onclick = startLive;
+$('stopLive').onclick = stopLive;
+$('sendManual').onclick = async () => {
+  try {
     stopLive();
-    updateModeUi();
-  },
-);
+    clearQrCandidate();
+    const coords = {
+      latitude:$('manualLat').value,
+      longitude:$('manualLon').value,
+      display_altitude:$('manualAlt').value,
+      accuracy:$('manualAcc').value,
+      heading:$('manualHeading').value,
+    };
+    showPosition(coords, 'manual');
+    await publish(coords,'manual',{display_altitude:$('manualAlt').value});
+  } catch(e){
+    reportError('SEND',e);
+  }
+};
 
-$('moveForward').addEventListener(
-  'click',
-  () => moveIndoor(
-    Number($('indoorStep').value) || 1,
-    0,
-  ),
-);
+addEventListener('online',updateNetwork);
+addEventListener('offline',updateNetwork);
+addEventListener('beforeunload',()=>{
+  stopLive();
+  stopQrScanner();
+  if(watchId!==null)navigator.geolocation.clearWatch(watchId);
+});
 
-$('moveBackward').addEventListener(
-  'click',
-  () => moveIndoor(
-    -(Number($('indoorStep').value) || 1),
-    0,
-  ),
-);
-
-$('moveLeft').addEventListener(
-  'click',
-  () => moveIndoor(
-    0,
-    -(Number($('indoorStep').value) || 1),
-  ),
-);
-
-$('moveRight').addEventListener(
-  'click',
-  () => moveIndoor(
-    0,
-    Number($('indoorStep').value) || 1,
-  ),
-);
-
-if (window.isSecureContext) {
-  $('secureStatus').textContent = 'Secure Context: YES';
-  $('secureStatus').className = 'ok';
-} else {
-  $('secureStatus').textContent =
-    'Secure Context: NO — GPS مرورگر فعال نخواهد شد';
-  $('secureStatus').className = 'bad';
-}
-
+$('secure').textContent=`Secure Context: ${window.isSecureContext?'YES':'NO'}`;
+$('secure').className=`pill ${window.isSecureContext?'ok':'bad'}`;
+updateNetwork();
+permissionStatus();
 loadProfile();
-updateAvatarPreview();
-updateModeUi();
-log('NCC MOBILE USER STAGE 40 READY');
+log('NCC MOBILE USER STAGE104 READY · GPS + QR + PHOTO');
 </script>
 </body>
 </html>
