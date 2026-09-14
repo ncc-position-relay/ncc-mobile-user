@@ -20,6 +20,10 @@ let latestGps = null;
 let qrStream = null;
 let qrLoopActive = false;
 let qrDetector = null;
+let qrDetectorBroken = false;
+let qrDecoderMode = 'none';
+let qrFramesScanned = 0;
+let qrLastStatusAt = 0;
 let scannedQrPoint = null;
 let userPhotoDataUrl = null;
 let motionBound = false;
@@ -244,7 +248,7 @@ function handlePdrAnchorState(state) {
   const a = state.anchor;
   $('pdrAnchorBanner').textContent = a
     ? `Anchor: ${a.point_id || a.id || 'QR'} · E ${a.e.toFixed(3)} · N ${a.n.toFixed(3)} · H ${a.h.toFixed(3)} m`
-    : 'Anchor: ثبت نشده — ابتدا QR را اسکن کنید.';
+    : 'Anchor: ثبت نشده — QR را اسکن کنید یا GPS Anchor موقت بسازید.';
   $('pdrAnchorBanner').className = a ? 'source-banner ok' : 'source-banner';
   updatePdrUi(state);
 }
@@ -421,41 +425,209 @@ function setQrCandidate(point) {
   $('applyQr').disabled = false; $('cancelQr').disabled = false;
   log(`QR READY ${point.point_id}`);
 }
-async function ensureQrDecoder() {
-  if ('BarcodeDetector' in window) {
-    try { qrDetector = new BarcodeDetector({ formats: ['qr_code'] }); return 'barcode'; } catch {}
-  }
-  if (window.jsQR) return 'jsqr';
-  const urls = ['https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js','https://unpkg.com/jsqr@1.4.0/dist/jsQR.js'];
+function setQrScannerStatus(text, mode = '') {
+  const el = $('qrScannerStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `source-banner ${mode === 'ok' ? 'scan-live' : mode === 'warn' ? 'scan-warn' : ''}`;
+}
+
+async function loadJsQrFallback() {
+  if (window.jsQR) return true;
+  const urls = [
+    'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js',
+    'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js',
+  ];
   for (const url of urls) {
     try {
-      await new Promise((resolve, reject) => { const s=document.createElement('script');s.src=url;s.onload=resolve;s.onerror=reject;document.head.append(s); });
-      if (window.jsQR) return 'jsqr';
+      await new Promise((resolve, reject) => {
+        const existing = [...document.scripts].find(x => x.src === url);
+        if (existing && window.jsQR) return resolve();
+        const script = document.createElement('script');
+        script.src = url;
+        script.async = true;
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.append(script);
+      });
+      if (window.jsQR) return true;
     } catch {}
   }
-  throw new Error('QR decoder در دسترس نیست. از دوربین عادی گوشی برای بازکردن QR URL استفاده کنید.');
+  return false;
 }
+
+async function ensureQrDecoder() {
+  let barcodeOk = false;
+  if (!qrDetectorBroken && 'BarcodeDetector' in window) {
+    try {
+      const supported = typeof BarcodeDetector.getSupportedFormats === 'function'
+        ? await BarcodeDetector.getSupportedFormats()
+        : ['qr_code'];
+      if (supported.includes('qr_code')) {
+        qrDetector = new BarcodeDetector({ formats: ['qr_code'] });
+        barcodeOk = true;
+      }
+    } catch (e) {
+      qrDetector = null;
+      qrDetectorBroken = true;
+      log(`BarcodeDetector init fallback: ${e?.message || e}`);
+    }
+  }
+
+  // Important: load jsQR even when BarcodeDetector exists. Some Android/Chrome
+  // builds expose BarcodeDetector but fail to decode canvas/video frames.
+  const jsQrOk = await loadJsQrFallback();
+  qrDecoderMode = [barcodeOk ? 'BarcodeDetector' : '', jsQrOk ? 'jsQR' : ''].filter(Boolean).join(' + ') || 'none';
+  if (!barcodeOk && !jsQrOk) {
+    throw new Error('هیچ QR decoder فعالی در دسترس نیست. از دوربین عادی گوشی برای بازکردن QR یا Anchor پشتیبان استفاده کنید.');
+  }
+  setQrScannerStatus(`QR Scanner: ${qrDecoderMode} آماده است.`, 'ok');
+  return qrDecoderMode;
+}
+
+async function decodeQrFrame(video, canvas, ctx) {
+  if (qrDetector && !qrDetectorBroken) {
+    try {
+      const rows = await qrDetector.detect(video);
+      if (rows?.[0]?.rawValue) return rows[0].rawValue;
+    } catch (e) {
+      // Do not get stuck forever on a partially implemented BarcodeDetector.
+      qrDetectorBroken = true;
+      qrDetector = null;
+      log(`BarcodeDetector disabled: ${e?.message || e}`);
+    }
+  }
+
+  if (!window.jsQR) return null;
+  const vw = video.videoWidth || 0, vh = video.videoHeight || 0;
+  if (!vw || !vh) return null;
+  const maxDim = 960;
+  const scale = Math.min(1, maxDim / Math.max(vw, vh));
+  canvas.width = Math.max(1, Math.round(vw * scale));
+  canvas.height = Math.max(1, Math.round(vh * scale));
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' })?.data || null;
+}
+
 async function decodeQrCanvas(canvas) {
-  if (qrDetector) {
-    const rows = await qrDetector.detect(canvas); if (rows?.[0]?.rawValue) return rows[0].rawValue;
+  if (qrDetector && !qrDetectorBroken) {
+    try {
+      const rows = await qrDetector.detect(canvas);
+      if (rows?.[0]?.rawValue) return rows[0].rawValue;
+    } catch (e) {
+      qrDetectorBroken = true;
+      qrDetector = null;
+      log(`BarcodeDetector image fallback: ${e?.message || e}`);
+    }
   }
   if (window.jsQR) {
-    const ctx = canvas.getContext('2d', { willReadFrequently: true }); const img = ctx.getImageData(0,0,canvas.width,canvas.height);
-    return window.jsQR(img.data,img.width,img.height,{ inversionAttempts:'attemptBoth' })?.data || null;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    return window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' })?.data || null;
   }
   return null;
 }
+
 async function startQrCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera API در این مرورگر در دسترس نیست.');
   await ensureQrDecoder();
-  qrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width:{ideal:1280}, height:{ideal:720} }, audio:false });
-  $('qrVideo').srcObject = qrStream; $('qrVideo').style.display='block'; await $('qrVideo').play();
-  $('startQr').disabled=true; $('stopQr').disabled=false; qrLoopActive=true;
-  const canvas=$('qrCanvas'),ctx=canvas.getContext('2d',{willReadFrequently:true});
-  const loop=async()=>{ if(!qrLoopActive)return; const v=$('qrVideo'); if(v.readyState>=2&&v.videoWidth){canvas.width=v.videoWidth;canvas.height=v.videoHeight;ctx.drawImage(v,0,0); try{const raw=await decodeQrCanvas(canvas);const p=raw&&parseQrUrl(raw);if(p){setQrCandidate(p);stopQrCamera();return;}}catch{}} requestAnimationFrame(loop);};
-  requestAnimationFrame(loop);
+  stopQrCamera();
+  qrFramesScanned = 0;
+  qrLastStatusAt = performance.now();
+  setQrScannerStatus(`در حال بازکردن دوربین · decoder: ${qrDecoderMode}`, 'warn');
+
+  qrStream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: false,
+  });
+  const video = $('qrVideo');
+  video.srcObject = qrStream;
+  video.muted = true;
+  video.playsInline = true;
+  video.style.display = 'block';
+  await video.play();
+
+  // Ask for continuous focus when the device supports it; ignore if unsupported.
+  try {
+    const track = qrStream.getVideoTracks()[0];
+    const caps = track?.getCapabilities?.() || {};
+    if (Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) {
+      await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+    }
+  } catch {}
+
+  $('startQr').disabled = true;
+  $('stopQr').disabled = false;
+  qrLoopActive = true;
+  const canvas = $('qrCanvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  setQrScannerStatus(`اسکن فعال · ${qrDecoderMode} · QR را 15–40 cm روبروی دوربین نگه دارید.`, 'ok');
+
+  const loop = async () => {
+    if (!qrLoopActive) return;
+    try {
+      if (video.readyState >= 2 && video.videoWidth) {
+        qrFramesScanned += 1;
+        const raw = await decodeQrFrame(video, canvas, ctx);
+        if (raw) {
+          const point = parseQrUrl(raw);
+          if (point) {
+            setQrCandidate(point);
+            setQrScannerStatus(`QR خوانده شد: ${point.point_id} — برای ثبت Anchor تأیید کنید.`, 'ok');
+            stopQrCamera({ keepStatus: true });
+            return;
+          }
+          setQrScannerStatus('QR خوانده شد ولی متعلق به NCC Position نیست.', 'warn');
+        }
+        const now = performance.now();
+        if (now - qrLastStatusAt > 1800) {
+          qrLastStatusAt = now;
+          setQrScannerStatus(`اسکن فعال · ${qrFramesScanned} فریم بررسی شد · QR را بزرگ و واضح داخل تصویر نگه دارید.`, 'ok');
+        }
+      }
+    } catch (e) {
+      log(`QR FRAME: ${e?.message || e}`);
+      // Try to acquire jsQR if BarcodeDetector failed after startup.
+      if (!window.jsQR) await loadJsQrFallback();
+    }
+    if (qrLoopActive) setTimeout(loop, 90);
+  };
+  setTimeout(loop, 60);
 }
-function stopQrCamera(){qrLoopActive=false;if(qrStream){for(const t of qrStream.getTracks())t.stop();qrStream=null;}$('qrVideo').srcObject=null;$('qrVideo').style.display='none';$('startQr').disabled=false;$('stopQr').disabled=true;}
-async function scanQrImage(file){ await ensureQrDecoder(); const image=await fileToImage(file); const canvas=$('qrCanvas'); const max=1400,scale=Math.min(1,max/Math.max(image.width||image.naturalWidth,image.height||image.naturalHeight)); canvas.width=Math.max(1,Math.round((image.width||image.naturalWidth)*scale));canvas.height=Math.max(1,Math.round((image.height||image.naturalHeight)*scale));canvas.getContext('2d').drawImage(image,0,0,canvas.width,canvas.height);const raw=await decodeQrCanvas(canvas);image.close?.();if(!raw)throw new Error('QR در تصویر پیدا نشد.');const p=parseQrUrl(raw);if(!p)throw new Error('QR متعلق به NCC Position نیست.');setQrCandidate(p);}
+
+function stopQrCamera({ keepStatus = false } = {}) {
+  qrLoopActive = false;
+  if (qrStream) {
+    for (const t of qrStream.getTracks()) t.stop();
+    qrStream = null;
+  }
+  $('qrVideo').srcObject = null;
+  $('qrVideo').style.display = 'none';
+  $('startQr').disabled = false;
+  $('stopQr').disabled = true;
+  if (!keepStatus) setQrScannerStatus('QR Scanner: متوقف شد.');
+}
+
+async function scanQrImage(file) {
+  await ensureQrDecoder();
+  const image = await fileToImage(file);
+  const canvas = $('qrCanvas');
+  const max = 1400;
+  const iw = image.width || image.naturalWidth;
+  const ih = image.height || image.naturalHeight;
+  const scale = Math.min(1, max / Math.max(iw, ih));
+  canvas.width = Math.max(1, Math.round(iw * scale));
+  canvas.height = Math.max(1, Math.round(ih * scale));
+  canvas.getContext('2d', { willReadFrequently: true }).drawImage(image, 0, 0, canvas.width, canvas.height);
+  const raw = await decodeQrCanvas(canvas);
+  image.close?.();
+  if (!raw) throw new Error('QR در تصویر پیدا نشد. تصویر را نزدیک‌تر، بدون انعکاس و با رزولوشن بالاتر بگیرید.');
+  const point = parseQrUrl(raw);
+  if (!point) throw new Error('QR خوانده شد ولی متعلق به NCC Position نیست.');
+  setQrCandidate(point);
+  setQrScannerStatus(`QR از تصویر خوانده شد: ${point.point_id}`, 'ok');
+}
 
 function stopGpsLive() { if (gpsWatchId != null) navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId=null; $('stopGps').disabled=true; $('startGps').disabled=false; }
 function gpsOptions(){return {enableHighAccuracy:true,timeout:15000,maximumAge:1000};}
@@ -463,7 +635,7 @@ function gpsToPosition(pos){
   const c=pos.coords,utm=wgs84ToUtm39(c.longitude,c.latitude);
   return { latitude:c.latitude,longitude:c.longitude,easting:utm.easting,northing:utm.northing,h:numberOr(c.altitude,0),headingDeg:Number.isFinite(c.heading)?normalizeHeading(c.heading):currentHeading(),accuracy:c.accuracy,altitude:c.altitude,altitudeAccuracy:c.altitudeAccuracy,speed:c.speed };
 }
-function showGps(pos){ latestGps=pos; const p=gpsToPosition(pos); displayPosition(p,{source:'gps',appendPath:true}); const warn=numberOr($('accuracyWarn').value,50); $('viewerStatus').textContent=`GPS · accuracy ${Number(pos.coords.accuracy).toFixed(1)} m${pos.coords.accuracy>warn?' · ضعیف':''}`; return p; }
+function showGps(pos){ latestGps=pos; const p=gpsToPosition(pos); displayPosition(p,{source:'gps',appendPath:true}); $('useGpsAnchor').disabled=false; const warn=numberOr($('accuracyWarn').value,50); $('viewerStatus').textContent=`GPS · accuracy ${Number(pos.coords.accuracy).toFixed(1)} m${pos.coords.accuracy>warn?' · ضعیف':''}`; return p; }
 async function gpsOnceAndSend(){ const pos=await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,gpsOptions())); const p=showGps(pos); await publish({latitude:p.latitude,longitude:p.longitude,altitude:p.altitude,display_altitude:p.h,accuracy:p.accuracy,altitudeAccuracy:p.altitudeAccuracy,speed:p.speed,heading:p.headingDeg,utm_easting:p.easting,utm_northing:p.northing},'gps'); }
 function startGpsLive(){ stopGpsLive(); gpsWatchId=navigator.geolocation.watchPosition(pos=>{const p=showGps(pos);publish({latitude:p.latitude,longitude:p.longitude,altitude:p.altitude,display_altitude:p.h,accuracy:p.accuracy,altitudeAccuracy:p.altitudeAccuracy,speed:p.speed,heading:p.headingDeg,utm_easting:p.easting,utm_northing:p.northing},'gps').catch(e=>reportError('GPS LIVE SEND',e));},e=>reportError('GPS',e),gpsOptions()); $('stopGps').disabled=false;$('startGps').disabled=true; }
 
@@ -541,6 +713,52 @@ async function setViewerMode(mode){
 
 async function loadModelFromUrl(){ const url=$('modelUrl').value.trim();if(!url)throw new Error('Model URL خالی است.');localStorage.setItem(MODEL_URL_KEY,url);const v=await ensure3D();await v.loadModel(url);await setViewerMode('3d'); }
 
+function knownQrById(id) {
+  const q = NCC_CONFIG.qrPoints.find(x => x.id === id);
+  if (!q) return null;
+  return {
+    point_id: q.id,
+    longitude: Number(q.lon),
+    latitude: Number(q.lat),
+    utm_easting: Number(q.e),
+    utm_northing: Number(q.n),
+    height_m: Number(q.h || 0),
+    epsg: Number(q.epsg || 32639),
+    floor_id: q.floor_id || null,
+  };
+}
+
+function useKnownQrAnchorCandidate() {
+  const q = knownQrById($('knownQrSelect').value);
+  if (!q) throw new Error('QR انتخابی در config وجود ندارد.');
+  setQrCandidate(q);
+  setQrScannerStatus(`Anchor پشتیبان انتخاب شد: ${q.point_id} — حالا «تأیید QR + Anchor» را بزنید.`, 'warn');
+}
+
+function useLatestGpsAsAnchor() {
+  if (!latestGps) throw new Error('ابتدا GPS یک‌بار یا GPS زنده را فعال کنید تا Fix معتبر دریافت شود.');
+  const pos = gpsToPosition(latestGps);
+  if (!Number.isFinite(pos.easting) || !Number.isFinite(pos.northing)) throw new Error('GPS Fix معتبر نیست.');
+  stopGpsLive();
+  pdr.stop();
+  pdr.setAnchor({
+    point_id: 'GPS_TEMP_ANCHOR',
+    e: pos.easting,
+    n: pos.northing,
+    h: numberOr(pos.h, 0),
+    longitude: pos.longitude,
+    latitude: pos.latitude,
+    epsg: 32639,
+    temporary: true,
+  }, { keepActive: false });
+  pdr.setHeading(currentHeading());
+  const state = pdr.snapshot();
+  displayPdrState(state, false);
+  setSource('gps-anchor', 'TEMP');
+  $('pdrAnchorBanner').textContent += ` · دقت GPS≈${Number(pos.accuracy || 0).toFixed(1)}m`;
+  log(`TEMP GPS PDR ANCHOR E=${pos.easting.toFixed(3)} N=${pos.northing.toFixed(3)}`);
+}
+
 function applyQrAsAnchor() {
   if(!scannedQrPoint)throw new Error('QR معتبر انتخاب نشده است.');
   stopGpsLive();
@@ -569,10 +787,12 @@ $('enableSensors').onclick=()=>requestSensorPermission().then(()=>log('SENSORS E
 $('gpsOnce').onclick=()=>gpsOnceAndSend().catch(e=>reportError('GPS ONCE',e));
 $('startGps').onclick=()=>{try{startGpsLive();}catch(e){reportError('GPS LIVE',e);}};
 $('stopGps').onclick=stopGpsLive;
+$('useGpsAnchor').onclick=()=>{try{useLatestGpsAsAnchor();}catch(e){reportError('GPS ANCHOR',e);}};
 $('startQr').onclick=()=>startQrCamera().catch(e=>reportError('QR CAMERA',e));
 $('stopQr').onclick=stopQrCamera;
 $('applyQr').onclick=()=>{try{applyQrAsAnchor();}catch(e){reportError('QR APPLY',e);}};
 $('cancelQr').onclick=cancelQr;
+$('useKnownQr').onclick=()=>{try{useKnownQrAnchorCandidate();}catch(e){reportError('QR FALLBACK',e);}};
 $('scanQrImage').onclick=()=>$('qrImageInput').click();
 $('qrImageInput').onchange=e=>{const f=e.target.files?.[0];if(f)scanQrImage(f).catch(err=>reportError('QR IMAGE',err));e.target.value='';};
 $('startPdr').onclick=async()=>{try{if(!sensorPermissionGranted)await requestSensorPermission();pdr.setConfig(pdrConfigFromUi());pdr.setHeading(currentHeading());pdr.start();updatePdrUi();setSource('pdr');log('PDR STARTED');}catch(e){reportError('PDR START',e);}};
@@ -603,6 +823,6 @@ async function boot(){
   updatePdrUi();
   await initViewers();
   drawAccelChart();
-  log('NCC MOBILE STAGE106 READY · QR + PDR + 2D + 3D + LIVE RELAY');
+  log('NCC MOBILE STAGE106B READY · ROBUST QR + GPS ANCHOR + PDR + 2D + 3D + LIVE RELAY');
 }
 boot().catch(e=>reportError('BOOT',e));

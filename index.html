@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#071722">
   <meta name="color-scheme" content="dark">
-  <title>NCC XR — Mobile Indoor PDR · Stage106</title>
+  <title>NCC XR — Mobile Indoor PDR · Stage106B</title>
   <link rel="stylesheet" href="./app.css?v=106">
   <script type="importmap">
   {
@@ -20,7 +20,7 @@
 <main>
   <section class="card">
     <h1>NCC XR — تعیین موقعیت موبایل · Stage106</h1>
-    <div class="muted">QR Anchor + PDR ساده + نقشه 2D + مدل GLB سه‌بعدی + ارسال زنده به Cesium/XR</div>
+    <div class="muted">QR Anchor پایدار + GPS Anchor موقت + PDR + نقشه 2D + مدل GLB سه‌بعدی + ارسال زنده به Cesium/XR</div>
     <div class="status">
       <span id="secure" class="pill">Secure Context: …</span>
       <span id="network" class="pill">Network: …</span>
@@ -80,7 +80,8 @@
     <div class="row"><span>UTM N</span><span id="utmN" class="ltr">—</span></div>
     <div class="row"><span>Heading</span><span id="deviceHeading" class="ltr">—</span></div>
     <div class="toolbar3"><button id="enableSensors" class="primary">فعال‌کردن سنسورها</button><button id="gpsOnce">GPS یک‌بار + ارسال</button><button id="startGps">شروع GPS زنده</button></div>
-    <button id="stopGps" class="danger" style="margin-top:8px" disabled>توقف GPS زنده</button>
+    <div class="toolbar" style="margin-top:8px"><button id="stopGps" class="danger" disabled>توقف GPS زنده</button><button id="useGpsAnchor" disabled>استفاده از آخرین GPS به‌عنوان Anchor موقت PDR</button></div>
+    <div class="muted" style="margin-top:6px">Anchor مبتنی بر GPS فقط برای تست/پشتیبان است. برای داخل ساختمان، QR Anchor اولویت دارد و با اسکن QR جایگزین می‌شود.</div>
   </section>
 
   <section class="card">
@@ -88,15 +89,20 @@
     <div class="notice">QR مختصات دقیق نقطه کنترل را تعیین می‌کند. با تأیید QR، GPS Live متوقف و همان نقطه Anchor اولیه/اصلاحی PDR می‌شود.</div>
     <div class="cameraBox" style="margin-top:8px">
       <video id="qrVideo" playsinline muted></video><canvas id="qrCanvas" hidden></canvas>
+      <div id="qrScannerStatus" class="source-banner">QR Scanner: آماده — دوربین را روی QR نگه دارید.</div>
       <div id="qrResult"><b id="qrPointId">—</b><div id="qrCoordinates" class="ltr"></div><div id="qrUtm" class="ltr"></div><div id="qrHeight" class="ltr"></div></div>
       <div class="toolbar"><button id="startQr" class="primary">شروع اسکن QR</button><button id="stopQr" disabled>توقف دوربین</button><button id="applyQr" class="success" disabled>تأیید QR + Anchor</button><button id="cancelQr" disabled>لغو QR</button></div>
       <input id="qrImageInput" class="hiddenInput" type="file" accept="image/*"><button id="scanQrImage" style="margin-top:8px">اسکن QR از تصویر</button>
+      <div class="manual-anchor" style="margin-top:8px">
+        <select id="knownQrSelect"><option value="NCC_QR_L1">NCC_QR_L1</option><option value="NCC_QR_L2">NCC_QR_L2</option><option value="NCC_QR_L3">NCC_QR_L3</option></select>
+        <button id="useKnownQr">استفاده از QR انتخابی به‌عنوان Anchor (پشتیبان)</button>
+      </div>
     </div>
   </section>
 
   <section class="card">
     <h2>۴) PDR داخل ساختمان</h2>
-    <div id="pdrAnchorBanner" class="source-banner">Anchor: ثبت نشده — ابتدا QR را اسکن کنید.</div>
+    <div id="pdrAnchorBanner" class="source-banner">Anchor: ثبت نشده — QR را اسکن کنید یا GPS Anchor موقت بسازید.</div>
     <div class="grid3">
       <label>طول گام ثابت (m)<input id="stepLength" type="number" value="0.70" min="0.2" max="1.5" step="0.01"></label>
       <label>Threshold قله (m/s²)<input id="peakThreshold" type="number" value="0.90" min="0.1" max="4" step="0.05"></label>
@@ -107,7 +113,7 @@
     </div>
     <div class="pdr-kpi"><div><b id="pdrSteps">0</b><small>گام</small></div><div><b id="pdrDistance">0.00</b><small>متر</small></div><div><b id="pdrCadence">0</b><small>گام/دقیقه</small></div><div><b id="pdrAccel">0.00</b><small>Dynamic Accel</small></div></div>
     <canvas id="accelChart"></canvas>
-    <div class="toolbar3"><button id="startPdr" class="success" disabled>شروع PDR</button><button id="stopPdr" class="danger" disabled>توقف PDR</button><button id="resetPdr">Reset به QR</button></div>
+    <div class="toolbar3"><button id="startPdr" class="success" disabled>شروع PDR</button><button id="stopPdr" class="danger" disabled>توقف PDR</button><button id="resetPdr">Reset به Anchor</button></div>
   </section>
 
   <section class="card">
@@ -125,6 +131,6 @@
     <p id="relayStatus">Relay: آماده</p><div id="log"></div>
   </section>
 </main>
-<script type="module" src="./app.js?v=106"></script>
+<script type="module" src="./app.js?v=106b"></script>
 </body>
 </html>
