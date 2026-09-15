@@ -1,8 +1,8 @@
-import { NCC_CONFIG } from './config.js?v=1073';
-import { wgs84ToUtm39, utm39ToWgs84, normalizeHeading, projectStepCardinalSelfTest } from './utm.js?v=1073';
-import { HeadingFusion } from './headingFusion.js?v=1073';
-import { PdrEngine } from './pdr.js?v=1073';
-import { MobileMap2D } from './map2d.js?v=1073';
+import { NCC_CONFIG } from './config.js?v=1076';
+import { wgs84ToUtm39, utm39ToWgs84, normalizeHeading, projectStepCardinalSelfTest } from './utm.js?v=1076';
+import { HeadingFusion } from './headingFusion.js?v=1076';
+import { PdrEngine } from './pdr.js?v=1076';
+import { MobileMap2D } from './map2d.js?v=1076';
 
 const $ = id => document.getElementById(id);
 const PROFILE_KEY = 'ncc_mobile_profile_stage107';
@@ -45,10 +45,14 @@ let viewerMode = '2d';
 let followUser = true;
 let sensorPermissionGranted = false;
 
-// Stage107.5 transport state. PDR may run at sensor rate, while Internet publishing
+// Stage107.6 transport state. PDR may run at sensor rate, while Internet publishing
 // is coalesced to the newest coordinate so public relay limits are never hit by
 // one request per step.
 let pdrPublishTimer = null;
+let relaySendChain = Promise.resolve();
+let gpsLivePublishTimer = null;
+let gpsPendingLivePosition = null;
+let latestGpsAtMs = 0;
 let relayBackoffUntil = 0;
 let relayNextAllowedAt = 0;
 let relayConsecutiveFailures = 0;
@@ -465,26 +469,26 @@ async function publishPdrState(state, source = 'pdr') {
   });
 }
 
-async function sendCurrentPositionNow() {
-  const state = pdr.snapshot();
-  if (state?.anchor && Number.isFinite(state.easting) && Number.isFinite(state.northing)) {
-    queuePdrPublish(state, 'pdr-manual', true);
-    $('relayStatus').textContent = 'PDR: جدیدترین مختصات برای ارسال به سامانه در صف قرار گرفت.';
-    $('relayStatus').className = 'ok';
-    log(`PDR MANUAL QUEUE E=${state.easting.toFixed(3)} N=${state.northing.toFixed(3)} step=${state.stepCount}`);
-    return;
+async function sendPdrNow(){
+  const state=pdr.snapshot();
+  if(!state?.anchor||!Number.isFinite(state.easting)||!Number.isFinite(state.northing)) throw new Error('برای ارسال PDR ابتدا QR یا GPS را Anchor کنید.');
+  queuePdrPublish(state,'pdr-manual',true);
+  $('relayStatus').textContent='PDR: جدیدترین E/N برای ارسال امن در صف قرار گرفت.';
+  $('relayStatus').className='ok';
+  log(`PDR EXPLICIT SEND E=${state.easting.toFixed(3)} N=${state.northing.toFixed(3)} step=${state.stepCount}`);
+}
+
+async function sendCurrentPositionNow(){
+  const source=String(activeSource||'');
+  if(source.startsWith('gps')&&latestGps){const p=gpsToPosition(latestGps);await publish(gpsPublishPayload(p),'gps-manual');return;}
+  if(source.startsWith('qr')&&pdr.anchor){
+    const a=pdr.anchor,geo=utm39ToWgs84(a.e,a.n);
+    await publish({latitude:geo.latitude,longitude:geo.longitude,display_altitude:a.h,heading:currentHeading(),utm_easting:a.e,utm_northing:a.n},'qr-manual',{qr_point_id:a.point_id||null,qr_epsg:a.epsg||32639,pdr_anchor_id:a.point_id||null});return;
   }
-  if (!lastPosition || !Number.isFinite(lastPosition.latitude) || !Number.isFinite(lastPosition.longitude)) {
-    throw new Error('هنوز موقعیت معتبری برای ارسال وجود ندارد. QR/GPS/PDR را فعال کنید.');
-  }
-  await publish({
-    latitude: lastPosition.latitude,
-    longitude: lastPosition.longitude,
-    display_altitude: lastPosition.h,
-    heading: lastPosition.headingDeg,
-    utm_easting: lastPosition.easting,
-    utm_northing: lastPosition.northing,
-  }, `${lastPosition.source || 'manual'}-manual`);
+  const state=pdr.snapshot();
+  if(state?.anchor&&Number.isFinite(state.easting)&&Number.isFinite(state.northing)){await sendPdrNow();return;}
+  if(!lastPosition||!Number.isFinite(lastPosition.latitude)||!Number.isFinite(lastPosition.longitude)) throw new Error('هنوز موقعیت معتبری برای ارسال وجود ندارد.');
+  await publish({latitude:lastPosition.latitude,longitude:lastPosition.longitude,display_altitude:lastPosition.h,heading:lastPosition.headingDeg,utm_easting:lastPosition.easting,utm_northing:lastPosition.northing},`${lastPosition.source||'manual'}-manual`);
 }
 
 function buildMessage(coords, source = 'gps', extra = {}) {
@@ -502,11 +506,11 @@ function buildMessage(coords, source = 'gps', extra = {}) {
       source,
       latitude: numberOrNull(coords.latitude),
       longitude: numberOrNull(coords.longitude),
-      altitude: source === 'qr' || source.startsWith('pdr') ? null : numberOrNull(coords.altitude),
+      altitude: source.startsWith('qr') || source.startsWith('pdr') ? null : numberOrNull(coords.altitude),
       display_altitude: numberOrNull(coords.display_altitude ?? extra.display_altitude),
       altitude_accuracy_m: numberOrNull(coords.altitudeAccuracy),
-      accuracy_m: (source === 'qr' || source.startsWith('pdr')) ? null : numberOrNull(coords.accuracy),
-      speed_mps: source === 'qr' ? 0 : numberOrNull(coords.speed),
+      accuracy_m: (source.startsWith('qr') || source.startsWith('pdr')) ? null : numberOrNull(coords.accuracy),
+      speed_mps: source.startsWith('qr') ? 0 : numberOrNull(coords.speed),
       heading_deg: heading,
       utm_easting: numberOrNull(coords.utm_easting ?? extra.utm_easting),
       utm_northing: numberOrNull(coords.utm_northing ?? extra.utm_northing),
@@ -545,7 +549,7 @@ function retryAfterMs(response) {
   return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
 }
 
-async function relayPost(message) {
+async function relayPostUnlocked(message) {
   const topic = cleanTopic($('sessionCode').value);
   if (topic.length < 20) throw new Error('Session Code معتبر نیست یا خیلی کوتاه است.');
   sessionStorage.setItem(SESSION_KEY, topic);
@@ -569,7 +573,7 @@ async function relayPost(message) {
 
   try {
     /*
-     * Stage107.5 critical fix:
+     * Stage107.6 critical fix:
      * The official ntfy browser example is a plain POST with only a body.
      * Do NOT add X-NCC-* or application/json headers here. A custom header
      * forces a CORS preflight (OPTIONS) before the real POST, which is exactly
@@ -664,6 +668,18 @@ async function relayPost(message) {
   updateRelayUi();
   return body.length;
 }
+function sleepMs(ms){ return new Promise(resolve=>setTimeout(resolve,Math.max(0,Number(ms)||0))); }
+async function relayPost(message){
+  const execute=async()=>{
+    const due=Math.max(relayBackoffUntil,relayNextAllowedAt);
+    if(due>Date.now()) await sleepMs(due-Date.now());
+    return relayPostUnlocked(message);
+  };
+  const task=relaySendChain.then(execute,execute);
+  relaySendChain=task.catch(()=>undefined);
+  return task;
+}
+
 async function testRelayConnectivity() {
   const topic = cleanTopic($('sessionCode').value);
   if (topic.length < 20) throw new Error('ابتدا Session Code معتبر را وارد کنید.');
@@ -826,7 +842,7 @@ async function ensureQrDecoder() {
     }
   }
 
-  // IMPORTANT Stage107.5 fix: load jsQR EVEN WHEN BarcodeDetector exists.
+  // IMPORTANT Stage107.6 fix: load jsQR EVEN WHEN BarcodeDetector exists.
   // Stage107 returned early after constructing BarcodeDetector, so a browser
   // whose native detector could not decode a frame never received a real fallback.
   const jsQrOk = await loadJsQrFallback();
@@ -992,15 +1008,70 @@ async function scanQrImage(file) {
   if (!(await processDecodedQr(decoded))) throw new Error('QR خوانده شد ولی متعلق به NCC Position نیست یا پارامترهای آن ناقص است.');
 }
 
-function stopGpsLive() { if (gpsWatchId != null) navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId=null; $('stopGps').disabled=true; $('startGps').disabled=false; }
-function gpsOptions(){return {enableHighAccuracy:true,timeout:15000,maximumAge:1000};}
+function stopGpsLive(){
+  if(gpsWatchId!=null) navigator.geolocation.clearWatch(gpsWatchId);
+  gpsWatchId=null;
+  clearInterval(gpsLivePublishTimer);
+  gpsLivePublishTimer=null;
+  gpsPendingLivePosition=null;
+  $('stopGps').disabled=true;
+  $('startGps').disabled=false;
+}
+function gpsOptions(high=true){return {enableHighAccuracy:high,timeout:high?22000:12000,maximumAge:high?3000:15000};}
+async function getFreshGps(){
+  if(!window.isSecureContext||!navigator.geolocation) throw new Error('HTTPS/GPS در این مرورگر در دسترس نیست.');
+  const once=options=>new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,options));
+  try{return await once(gpsOptions(true));}
+  catch(first){
+    log(`GPS HIGH ACCURACY fallback: ${first?.message||first}`);
+    try{return await once(gpsOptions(false));}
+    catch(second){
+      if(latestGps&&Date.now()-latestGpsAtMs<=30000){log('GPS fallback: آخرین نمونه کمتر از 30 ثانیه استفاده شد.');return latestGps;}
+      throw second;
+    }
+  }
+}
 function gpsToPosition(pos){
   const c=pos.coords,utm=wgs84ToUtm39(c.longitude,c.latitude);
-  return { latitude:c.latitude,longitude:c.longitude,easting:utm.easting,northing:utm.northing,h:numberOr(c.altitude,0),headingDeg:Number.isFinite(c.heading)?normalizeHeading(c.heading):currentHeading(),accuracy:c.accuracy,altitude:c.altitude,altitudeAccuracy:c.altitudeAccuracy,speed:c.speed };
+  return {source:'gps',latitude:c.latitude,longitude:c.longitude,easting:utm.easting,northing:utm.northing,h:numberOr(c.altitude,0),headingDeg:Number.isFinite(c.heading)?normalizeHeading(c.heading):currentHeading(),accuracy:c.accuracy,altitude:c.altitude,altitudeAccuracy:c.altitudeAccuracy,speed:c.speed};
 }
-function showGps(pos){ latestGps=pos; $('gpsAsAnchor').disabled=false; const p=gpsToPosition(pos); displayPosition(p,{source:'gps',appendPath:true}); const warn=numberOr($('accuracyWarn').value,50); $('viewerStatus').textContent=`GPS · accuracy ${Number(pos.coords.accuracy).toFixed(1)} m${pos.coords.accuracy>warn?' · ضعیف':''}`; return p; }
-async function gpsOnceAndSend(){ const pos=await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,gpsOptions())); const p=showGps(pos); await publish({latitude:p.latitude,longitude:p.longitude,altitude:p.altitude,display_altitude:p.h,accuracy:p.accuracy,altitudeAccuracy:p.altitudeAccuracy,speed:p.speed,heading:p.headingDeg,utm_easting:p.easting,utm_northing:p.northing},'gps'); }
-function startGpsLive(){ stopGpsLive(); gpsWatchId=navigator.geolocation.watchPosition(pos=>{const p=showGps(pos);publish({latitude:p.latitude,longitude:p.longitude,altitude:p.altitude,display_altitude:p.h,accuracy:p.accuracy,altitudeAccuracy:p.altitudeAccuracy,speed:p.speed,heading:p.headingDeg,utm_easting:p.easting,utm_northing:p.northing},'gps').catch(e=>reportError('GPS LIVE SEND',e));},e=>reportError('GPS',e),gpsOptions()); $('stopGps').disabled=false;$('startGps').disabled=true; }
+function showGps(pos){
+  latestGps=pos; latestGpsAtMs=Date.now(); $('gpsAsAnchor').disabled=false;
+  const p=gpsToPosition(pos); displayPosition(p,{source:'gps',appendPath:true});
+  const warn=numberOr($('accuracyWarn').value,50);
+  $('viewerStatus').textContent=`GPS · accuracy ${Number(pos.coords.accuracy).toFixed(1)} m${pos.coords.accuracy>warn?' · ضعیف':''}`;
+  return p;
+}
+function gpsPublishPayload(p){return {latitude:p.latitude,longitude:p.longitude,altitude:p.altitude,display_altitude:p.h,accuracy:p.accuracy,altitudeAccuracy:p.altitudeAccuracy,speed:p.speed,heading:p.headingDeg,utm_easting:p.easting,utm_northing:p.northing};}
+async function gpsOnceAndSend(){const pos=await getFreshGps();const p=showGps(pos);await publish(gpsPublishPayload(p),'gps');return p;}
+function reanchorPdr(anchor,label,resume){
+  const wasActive=Boolean(resume&&pdr.active);
+  if(pdr.active)pdr.stop();
+  pdr.setAnchor(anchor,{keepActive:false}); pdr.setHeading(currentHeading()); displayPdrState(pdr.snapshot(),false);
+  if(wasActive){pdr.start();startPdrHeartbeat();}
+  log(`PDR RE-ANCHOR ${label} · resume=${wasActive?'YES':'NO'}`);
+  return {wasActive,state:pdr.snapshot()};
+}
+async function gpsCorrectPdrAndSend(useLatest=false){
+  const pos=useLatest&&latestGps?latestGps:await getFreshGps(); const g=showGps(pos); const resume=pdr.active;
+  reanchorPdr({point_id:'GPS_CORRECTION',e:g.easting,n:g.northing,h:numberOr(g.h,0),longitude:g.longitude,latitude:g.latitude,epsg:32639,floor_id:null},'GPS_CORRECTION',resume);
+  setSource('gps-correction','GPS_CORRECTION');
+  await publish(gpsPublishPayload(g),'gps-correction',{pdr_anchor_id:'GPS_CORRECTION',pdr_step_count:0,pdr_distance_m:0});
+  if(resume){setSource('pdr','GPS_CORRECTION');queuePdrPublish(pdr.snapshot(),'pdr-reanchor',true);}
+  return g;
+}
+async function flushGpsLivePending(){
+  if(!gpsPendingLivePosition)return;
+  const pos=gpsPendingLivePosition; gpsPendingLivePosition=null;
+  try{const p=gpsToPosition(pos);await publish(gpsPublishPayload(p),'gps');}
+  catch(e){reportError('GPS LIVE SEND',e);}
+}
+function startGpsLive(){
+  stopGpsLive();
+  gpsWatchId=navigator.geolocation.watchPosition(pos=>{showGps(pos);gpsPendingLivePosition=pos;},e=>reportError('GPS',e),gpsOptions(true));
+  gpsLivePublishTimer=setInterval(()=>void flushGpsLivePending(),Math.max(1000,relayIntervalMs()));
+  $('stopGps').disabled=false;$('startGps').disabled=true;
+}
 
 async function requestSensorPermission() {
   let motionOk = true, orientationOk = true;
@@ -1093,7 +1164,7 @@ async function ensure3D(){
   if(view3dInitPromise) return view3dInitPromise;
   view3dInitPromise=(async()=>{
     $('modelStatus').textContent='در حال بارگذاری موتور Three.js…';
-    const { MobileBuilding3D } = await import('./view3d.js?v=1073');
+    const { MobileBuilding3D } = await import('./view3d.js?v=1076');
     const instance=new MobileBuilding3D($('view3d'),{
       ...NCC_CONFIG.model, transform:NCC_CONFIG.modelRuntimeTransform, qrPoints:NCC_CONFIG.qrPoints,
       verticalOffsetM:numberOr($('modelVerticalOffset').value,0),
@@ -1119,33 +1190,19 @@ async function setViewerMode(mode){
 
 async function loadModelFromUrl(){ const url=$('modelUrl').value.trim();if(!url)throw new Error('Model URL خالی است.');localStorage.setItem(MODEL_URL_KEY,url);const v=await ensure3D();await v.loadModel(url);await setViewerMode('3d'); }
 
-function applyQrAsAnchor() {
+async function applyQrAsAnchor(){
   if(!scannedQrPoint)throw new Error('QR معتبر انتخاب نشده است.');
-  stopGpsLive();
-  const q=scannedQrPoint;
-  pdr.stop();
-  pdr.setAnchor({ point_id:q.point_id,e:q.utm_easting,n:q.utm_northing,h:numberOr(q.height_m,0),longitude:q.longitude,latitude:q.latitude,epsg:q.epsg,floor_id:q.floor_id },{keepActive:false});
-  pdr.setHeading(currentHeading());
-  const state=pdr.snapshot();
-  displayPdrState(state,false);
-  setSource('qr',q.point_id);
-  publish({latitude:q.latitude,longitude:q.longitude,display_altitude:q.height_m,heading:currentHeading(),utm_easting:q.utm_easting,utm_northing:q.utm_northing},'qr',{qr_point_id:q.point_id,qr_epsg:q.epsg,display_altitude:q.height_m}).catch(e=>reportError('QR SEND',e));
+  stopGpsLive(); const q=scannedQrPoint; const resume=pdr.active;
+  reanchorPdr({point_id:q.point_id,e:q.utm_easting,n:q.utm_northing,h:numberOr(q.height_m,0),longitude:q.longitude,latitude:q.latitude,epsg:q.epsg,floor_id:q.floor_id},q.point_id,resume);
+  setSource('qr-correction',q.point_id);
+  await publish({latitude:q.latitude,longitude:q.longitude,display_altitude:q.height_m,heading:currentHeading(),utm_easting:q.utm_easting,utm_northing:q.utm_northing},'qr-correction',{qr_point_id:q.point_id,qr_epsg:q.epsg,display_altitude:q.height_m,pdr_anchor_id:q.point_id,pdr_step_count:0,pdr_distance_m:0});
+  if(resume){setSource('pdr',q.point_id);queuePdrPublish(pdr.snapshot(),'pdr-reanchor',true);}
   scannedQrPoint=null;$('applyQr').disabled=true;$('cancelQr').disabled=true;$('qrResult').style.display='none';
-  log(`PDR ANCHOR ${q.point_id} · Heading اولیه به‌صورت خودکار از مرجع مطلق گوشی استفاده می‌شود.`);
+  log(`PDR QR CORRECTION ${q.point_id} · sent · resume=${resume?'YES':'NO'}`);
 }
-
 function cancelQr(){scannedQrPoint=null;$('applyQr').disabled=true;$('cancelQr').disabled=true;$('qrResult').style.display='none';}
-function applyGpsAsAnchor(){
-  if(!latestGps) throw new Error('ابتدا یک موقعیت GPS معتبر دریافت کنید.');
-  stopGpsLive();
-  const g=gpsToPosition(latestGps);
-  pdr.stop();
-  pdr.setAnchor({point_id:'GPS_ANCHOR',e:g.easting,n:g.northing,h:numberOr(g.h,0),longitude:g.longitude,latitude:g.latitude,epsg:32639,floor_id:null},{keepActive:false});
-  pdr.setHeading(currentHeading());
-  displayPdrState(pdr.snapshot(),false);
-  setSource('gps-anchor','GPS_ANCHOR');
-  log(`PDR GPS ANCHOR E=${g.easting.toFixed(3)} N=${g.northing.toFixed(3)} · برای Indoor از QR استفاده کنید.`);
-}
+async function applyGpsAsAnchor(){return gpsCorrectPdrAndSend(true);}
+
 
 
 // Events
@@ -1156,6 +1213,7 @@ $('photoInput').onchange=async e=>{try{const f=e.target.files?.[0];if(!f)return;
 $('sendPhoto').onclick=()=>publishPhoto().catch(e=>reportError('PHOTO SEND',e));
 $('clearPhoto').onclick=()=>{userPhotoDataUrl=null;localStorage.removeItem(PHOTO_KEY);updatePhotoPreview();log('LOCAL PHOTO CLEARED');};
 $('sendCurrentPosition').onclick=()=>sendCurrentPositionNow().catch(e=>reportError('MANUAL SEND',e));
+$('sendPdrNow').onclick=()=>sendPdrNow().catch(e=>reportError('PDR EXPLICIT SEND',e));
 $('testRelay')?.addEventListener('click',()=>testRelayConnectivity().catch(e=>reportError('RELAY TEST',e)));
 $('retryRelay').onclick=()=>{clearRelayBackoff();relayNextAllowedAt=0;sendCurrentPositionNow().catch(e=>reportError('RELAY RETRY',e));};
 $('clearRelayBackoff').onclick=()=>{clearRelayBackoff();relayNextAllowedAt=0;$('relayStatus').textContent='Relay Backoff پاک شد؛ ارسال بعدی مجاز است.';$('relayStatus').className='ok';};
@@ -1165,9 +1223,10 @@ $('enableSensors').onclick=()=>requestSensorPermission().then(()=>log('SENSORS E
 $('calibrateHeading').onclick=()=>{try{calibrateHeadingFromUi();}catch(e){reportError('HEADING CAL',e);}};
 $('clearHeadingCalibration').onclick=()=>{headingFusion.clearCalibration();updatePdrUi();$('fusionStatus').textContent='WAIT ABSOLUTE';$('fusionStatus').className='ltr';log('HEADING OVERRIDE/AUTO INIT CLEARED');};
 $('gpsOnce').onclick=()=>gpsOnceAndSend().catch(e=>reportError('GPS ONCE',e));
+$('gpsCorrectPdr').onclick=()=>gpsCorrectPdrAndSend(false).catch(e=>reportError('GPS CORRECTION',e));
 $('startGps').onclick=()=>{try{startGpsLive();}catch(e){reportError('GPS LIVE',e);}};
 $('stopGps').onclick=stopGpsLive;
-$('gpsAsAnchor').onclick=()=>{try{applyGpsAsAnchor();}catch(e){reportError('GPS ANCHOR',e);}};
+$('gpsAsAnchor').onclick=()=>applyGpsAsAnchor().catch(e=>reportError('GPS ANCHOR',e));
 $('startQr').onclick=()=>startQrCamera().catch(e=>reportError('QR CAMERA',e));
 $('stopQr').onclick=stopQrCamera;
 $('applyQr').onclick=()=>{try{applyQrAsAnchor();}catch(e){reportError('QR APPLY',e);}};
@@ -1209,13 +1268,13 @@ async function boot(){
   updatePdrUi();
   await initViewers();
   drawAccelChart();
-  log('NCC MOBILE STAGE107.5 READY · QR + PDR + SAFE-RATE ONLINE RELAY + SYSTEM AVATAR');
+  log('NCC MOBILE STAGE107.6 READY · QR + PDR + SAFE-RATE ONLINE RELAY + SYSTEM AVATAR');
 }
 boot().catch(e=>reportError('BOOT',e));
 
-const __cardinalTest = projectStepCardinalSelfTest(); if(!__cardinalTest.ok) console.error('PDR CARDINAL SELF TEST FAILED',__cardinalTest); else console.info('[NCC Stage107.5] PDR cardinal convention OK: 0=N 90=E 180=S 270=W');
+const __cardinalTest = projectStepCardinalSelfTest(); if(!__cardinalTest.ok) console.error('PDR CARDINAL SELF TEST FAILED',__cardinalTest); else console.info('[NCC Stage107.6] PDR cardinal convention OK: 0=N 90=E 180=S 270=W');
 
-// Stage107.5 topic identity diagnostic.
+// Stage107.6 topic identity diagnostic.
 (() => {
   const bind = () => {
     const input = $('sessionCode');

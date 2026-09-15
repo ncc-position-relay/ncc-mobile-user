@@ -57,7 +57,7 @@ export class PdrEngine {
     const e = Number(anchor.e ?? anchor.utm_easting);
     const n = Number(anchor.n ?? anchor.utm_northing);
     const h = Number(anchor.h ?? anchor.display_altitude ?? 0);
-    if (!Number.isFinite(e) || !Number.isFinite(n)) throw new Error('QR anchor UTM is invalid.');
+    if (!Number.isFinite(e) || !Number.isFinite(n)) throw new Error('Anchor UTM is invalid.');
     this.anchor = { ...anchor, e, n, h };
     this.current = { easting: e, northing: n, h };
     this.stepCount = 0;
@@ -71,7 +71,7 @@ export class PdrEngine {
   }
 
   start() {
-    if (!this.anchor || !this.current) throw new Error('ابتدا یک QR Anchor معتبر ثبت کنید.');
+    if (!this.anchor || !this.current) throw new Error('ابتدا یک Anchor معتبر از QR یا GPS ثبت کنید.');
     this.active = true;
     this.armed = true;
     this.cb.onState?.(this.snapshot());

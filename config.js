@@ -1,5 +1,5 @@
 export const NCC_CONFIG = Object.freeze({
-  stage: '107.5',
+  stage: '107.6',
   relayBase: 'https://ntfy.sh',
   relay: {
     // Public ntfy request bucket: coalesce high-rate PDR steps and publish safely.

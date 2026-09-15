@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#071722">
   <meta name="color-scheme" content="dark">
-  <title>NCC XR — Mobile Indoor PDR · Stage107.5</title>
-  <link rel="stylesheet" href="./app.css?v=1073">
+  <title>NCC XR — Mobile Indoor PDR · Stage107.6</title>
+  <link rel="stylesheet" href="./app.css?v=1076">
   <script type="importmap">
   {
     "imports": {
@@ -19,7 +19,7 @@
 <body>
 <main>
   <section class="card">
-    <h1>NCC XR — تعیین موقعیت موبایل · Stage107.5</h1>
+    <h1>NCC XR — تعیین موقعیت موبایل · Stage107.6</h1>
     <div class="muted">QR Anchor + PDR ساده + نقشه 2D + مدل GLB سه‌بعدی + ارسال زنده به Cesium/XR</div>
     <div class="status">
       <span id="secure" class="pill">Secure Context: …</span>
@@ -75,7 +75,7 @@
       <label>Heading دستی اضطراری (deg)<input id="manualHeading" type="number" value="90" step="0.1"></label>
       <label>هشدار دقت GPS (m)<input id="accuracyWarn" type="number" value="50"></label>
     </div>
-    <div class="notice" style="margin-top:8px">گوشی را در راستای حرکت نگه دارید. Stage107.5 جهت اولیه را خودکار از Absolute Orientation مرجع زمین می‌گیرد. ژیروسکوپ فقط پیش‌بینی کوتاه‌مدت است و مرجع مطلق دائماً Drift را حذف می‌کند. نبودن Raw Magnetometer API به‌تنهایی خطا محسوب نمی‌شود.</div>
+    <div class="notice" style="margin-top:8px">گوشی را در راستای حرکت نگه دارید. Stage107.6 جهت اولیه را خودکار از Absolute Orientation مرجع زمین می‌گیرد. ژیروسکوپ فقط پیش‌بینی کوتاه‌مدت است و مرجع مطلق دائماً Drift را حذف می‌کند. نبودن Raw Magnetometer API به‌تنهایی خطا محسوب نمی‌شود.</div>
     <div class="toolbar" style="margin-top:8px"><button id="calibrateHeading" class="success">اعمال Override جهت (اختیاری)</button><button id="clearHeadingCalibration">پاک‌کردن کالیبراسیون جهت</button></div>
     <div class="row"><span>Fusion</span><span id="fusionStatus" class="ltr">—</span></div>
     <div class="row"><span>Gyro yaw rate</span><span id="gyroRate" class="ltr">—</span></div>
@@ -88,8 +88,8 @@
     <div class="row"><span>UTM E</span><span id="utmE" class="ltr">—</span></div>
     <div class="row"><span>UTM N</span><span id="utmN" class="ltr">—</span></div>
     <div class="row"><span>Heading</span><span id="deviceHeading" class="ltr">—</span></div>
-    <div class="toolbar3"><button id="enableSensors" class="primary">فعال‌کردن سنسورها</button><button id="gpsOnce">GPS یک‌بار + ارسال</button><button id="startGps">شروع GPS زنده</button></div>
-    <div class="toolbar" style="margin-top:8px"><button id="stopGps" class="danger" disabled>توقف GPS زنده</button><button id="gpsAsAnchor" disabled>ثبت آخرین GPS به‌عنوان Anchor آزمایشی</button></div>
+    <div class="toolbar3"><button id="enableSensors" class="primary">فعال‌کردن سنسورها</button><button id="gpsOnce">GPS یک‌بار + ارسال</button><button id="gpsCorrectPdr" class="success">GPS + اصلاح PDR + ارسال</button></div>
+    <div class="toolbar3" style="margin-top:8px"><button id="startGps">شروع GPS زنده</button><button id="stopGps" class="danger" disabled>توقف GPS زنده</button><button id="gpsAsAnchor" disabled>اصلاح PDR با آخرین GPS + ارسال</button></div>
   </section>
 
   <section class="card">
@@ -104,7 +104,7 @@
     <div class="cameraBox" style="margin-top:8px">
       <video id="qrVideo" playsinline muted></video><canvas id="qrCanvas" hidden></canvas>
       <div id="qrResult"><b id="qrPointId">—</b><div id="qrCoordinates" class="ltr"></div><div id="qrUtm" class="ltr"></div><div id="qrHeight" class="ltr"></div></div>
-      <div class="toolbar"><button id="startQr" class="primary">شروع اسکن QR</button><button id="stopQr" disabled>توقف دوربین</button><button id="applyQr" class="success" disabled>تأیید QR + Anchor</button><button id="cancelQr" disabled>لغو QR</button></div>
+      <div class="toolbar"><button id="startQr" class="primary">شروع اسکن QR</button><button id="stopQr" disabled>توقف دوربین</button><button id="applyQr" class="success" disabled>تأیید QR + اصلاح PDR + ارسال</button><button id="cancelQr" disabled>لغو QR</button></div>
       <input id="qrImageInput" class="hiddenInput" type="file" accept="image/*"><button id="scanQrImage" style="margin-top:8px">اسکن QR از تصویر</button>
     </div>
   </section>
@@ -122,12 +122,13 @@
     </div>
     <div class="pdr-kpi"><div><b id="pdrSteps">0</b><small>گام</small></div><div><b id="pdrDistance">0.00</b><small>متر</small></div><div><b id="pdrCadence">0</b><small>گام/دقیقه</small></div><div><b id="pdrAccel">0.00</b><small>Dynamic Accel</small></div></div>
     <canvas id="accelChart"></canvas>
-    <div class="toolbar3"><button id="startPdr" class="success" disabled>شروع PDR</button><button id="stopPdr" class="danger" disabled>توقف PDR</button><button id="resetPdr">Reset به QR</button></div>
+    <div class="toolbar3"><button id="startPdr" class="success" disabled>شروع PDR</button><button id="stopPdr" class="danger" disabled>توقف PDR</button><button id="sendPdrNow" class="primary">ارسال PDR همین الآن</button></div>
+    <div class="toolbar1" style="margin-top:8px"><button id="resetPdr">Reset به Anchor فعلی</button></div>
   </section>
 
   <section class="card">
     <h2>۵) مدل سه‌بعدی زمین‌مرجع روی موبایل</h2>
-    <div class="notice">Stage107.5 از همان تبدیل UTM↔Model_X/Z موجود در Backend استفاده می‌کند. فایل GLB را با نام <code>assets/ncc_building.glb</code> در GitHub Pages قرار دهید یا از گوشی انتخاب کنید.</div>
+    <div class="notice">Stage107.6 از همان تبدیل UTM↔Model_X/Z موجود در Backend استفاده می‌کند. فایل GLB را با نام <code>assets/ncc_building.glb</code> در GitHub Pages قرار دهید یا از گوشی انتخاب کنید.</div>
     <div class="model-tools" style="margin-top:8px"><input id="modelUrl" value="./assets/ncc_building.glb" class="ltr"><button id="loadModelUrl">بارگذاری URL</button></div>
     <input id="modelFile" class="hiddenInput" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json">
     <button id="pickModelFile" style="margin-top:8px">انتخاب GLB از حافظه گوشی</button>
@@ -136,19 +137,19 @@
 
   <section class="card">
     <h2>۶) وضعیت ارسال آنلاین به سامانه</h2>
-    <div class="notice">با شروع PDR، ارسال آنلاین به‌صورت پیش‌فرض فعال می‌شود. موقعیت محلی در هر گام محاسبه می‌شود، اما برای جلوگیری از خطای 429 سرویس عمومی Relay فقط جدیدترین مختصات با فاصله امن ارسال می‌شود.</div>
+    <div class="notice">PDR، GPS و QR هر سه قابل ارسال هستند. نمایش محلی full-rate است، اما اینترنت از یک صف سریال safe-rate استفاده می‌کند. GPS یا QR می‌توانند در میانه مسیر PDR را دوباره Anchor کنند.</div>
     <div class="grid3" style="margin-top:8px">
       <label>ارسال خودکار PDR<select id="autoPdrSend"><option value="on" selected>فعال</option><option value="off">غیرفعال</option></select></label>
       <label>فاصله ارسال آنلاین (ثانیه)<input id="relayIntervalSec" type="number" min="5.5" max="60" step="0.5" value="6"></label>
       <label>وضعیت صف<span id="relayQueueState" class="input-like ltr">READY</span></label>
     </div>
-    <div class="toolbar3" style="margin-top:8px"><button id="sendCurrentPosition" class="success">ارسال همین موقعیت الآن</button><button id="testRelay">تست اتصال Relay</button><button id="retryRelay">تلاش مجدد Relay</button></div><div class="toolbar1" style="margin-top:8px"><button id="clearRelayBackoff">پاک‌کردن Backoff</button></div>
+    <div class="toolbar3" style="margin-top:8px"><button id="sendCurrentPosition" class="success">ارسال آخرین موقعیت فعال</button><button id="testRelay">تست اتصال Relay</button><button id="retryRelay">تلاش مجدد Relay</button></div><div class="toolbar1" style="margin-top:8px"><button id="clearRelayBackoff">پاک‌کردن Backoff</button></div>
     <div class="row"><span>Transport</span><span id="relayTransport" class="ltr">ntfy · safe-rate</span></div>
     <div class="row"><span>Backoff</span><span id="relayBackoff" class="ltr">—</span></div>
     <div class="kpi"><div><b id="sentCount">0</b><small>موفق</small></div><div><b id="errorCount">0</b><small>خطا</small></div><div><b id="sequence">0</b><small>Sequence</small></div><div><b id="lastSend">—</b><small>آخرین ارسال</small></div></div>
     <p id="relayStatus">Relay: آماده</p><div id="log"></div>
   </section>
 </main>
-<script type="module" src="./app.js?v=1073"></script>
+<script type="module" src="./app.js?v=1076"></script>
 </body>
 </html>
