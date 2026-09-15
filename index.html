@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#071722">
   <meta name="color-scheme" content="dark">
-  <title>NCC XR — Mobile Indoor PDR · Stage107.1</title>
-  <link rel="stylesheet" href="./app.css?v=1071">
+  <title>NCC XR — Mobile Indoor PDR · Stage107.2</title>
+  <link rel="stylesheet" href="./app.css?v=1072">
   <script type="importmap">
   {
     "imports": {
@@ -19,7 +19,7 @@
 <body>
 <main>
   <section class="card">
-    <h1>NCC XR — تعیین موقعیت موبایل · Stage107.1</h1>
+    <h1>NCC XR — تعیین موقعیت موبایل · Stage107.2</h1>
     <div class="muted">QR Anchor + PDR ساده + نقشه 2D + مدل GLB سه‌بعدی + ارسال زنده به Cesium/XR</div>
     <div class="status">
       <span id="secure" class="pill">Secure Context: …</span>
@@ -74,11 +74,14 @@
       <label>Heading دستی اضطراری (deg)<input id="manualHeading" type="number" value="90" step="0.1"></label>
       <label>هشدار دقت GPS (m)<input id="accuracyWarn" type="number" value="50"></label>
     </div>
-    <div class="notice" style="margin-top:8px">گوشی را در راستای حرکت و ترجیحاً Portrait نگه دارید. جهت اولیه به‌صورت خودکار از Heading مطلقِ مرجع مغناطیسی گرفته می‌شود و سپس ژیروسکوپ + شتاب‌سنج + تصحیح آهسته مغناطیسی برای Heading پایدار استفاده می‌شوند. دکمه Override فقط برای تست اضطراری است.</div>
+    <div class="notice" style="margin-top:8px">گوشی را در راستای حرکت نگه دارید. Stage107.2 جهت اولیه را خودکار از Absolute Orientation مرجع زمین می‌گیرد. ژیروسکوپ فقط پیش‌بینی کوتاه‌مدت است و مرجع مطلق دائماً Drift را حذف می‌کند. نبودن Raw Magnetometer API به‌تنهایی خطا محسوب نمی‌شود.</div>
     <div class="toolbar" style="margin-top:8px"><button id="calibrateHeading" class="success">اعمال Override جهت (اختیاری)</button><button id="clearHeadingCalibration">پاک‌کردن کالیبراسیون جهت</button></div>
     <div class="row"><span>Fusion</span><span id="fusionStatus" class="ltr">—</span></div>
     <div class="row"><span>Gyro yaw rate</span><span id="gyroRate" class="ltr">—</span></div>
     <div class="row"><span>Magnetic field</span><span id="magField" class="ltr">—</span></div>
+    <div class="row"><span>Absolute heading</span><span id="absoluteHeading" class="ltr">—</span></div>
+    <div class="row"><span>Heading reference</span><span id="headingReference" class="ltr">—</span></div>
+    <div class="row"><span>Sensor capabilities</span><span id="sensorCapabilities" class="ltr">—</span></div>
     <div class="row"><span>Latitude</span><span id="lat" class="ltr">—</span></div>
     <div class="row"><span>Longitude</span><span id="lon" class="ltr">—</span></div>
     <div class="row"><span>UTM E</span><span id="utmE" class="ltr">—</span></div>
@@ -91,6 +94,12 @@
   <section class="card">
     <h2>۳) QR Anchor داخل ساختمان</h2>
     <div class="notice">QR مختصات دقیق نقطه کنترل را تعیین می‌کند. با تأیید QR، GPS Live متوقف و همان نقطه Anchor اولیه/اصلاحی PDR می‌شود.</div>
+    <div class="row"><span>Decoder</span><span id="qrDecoderStatus" class="ltr">—</span></div>
+    <div class="row"><span>Camera</span><span id="qrCameraInfo" class="ltr">—</span></div>
+    <div class="row"><span>Scan frames</span><span id="qrFrameCount" class="ltr">0</span></div>
+    <div class="row"><span>Validation</span><span id="qrValidation" class="ltr">—</span></div>
+    <div id="qrScanStatus" class="notice ltr">IDLE</div>
+    <details><summary>QR Raw Payload</summary><pre id="qrRaw" class="ltr">—</pre></details>
     <div class="cameraBox" style="margin-top:8px">
       <video id="qrVideo" playsinline muted></video><canvas id="qrCanvas" hidden></canvas>
       <div id="qrResult"><b id="qrPointId">—</b><div id="qrCoordinates" class="ltr"></div><div id="qrUtm" class="ltr"></div><div id="qrHeight" class="ltr"></div></div>
@@ -117,7 +126,7 @@
 
   <section class="card">
     <h2>۵) مدل سه‌بعدی زمین‌مرجع روی موبایل</h2>
-    <div class="notice">Stage107 از همان تبدیل UTM↔Model_X/Z موجود در Backend استفاده می‌کند. فایل GLB را با نام <code>assets/ncc_building.glb</code> در GitHub Pages قرار دهید یا از گوشی انتخاب کنید.</div>
+    <div class="notice">Stage107.2 از همان تبدیل UTM↔Model_X/Z موجود در Backend استفاده می‌کند. فایل GLB را با نام <code>assets/ncc_building.glb</code> در GitHub Pages قرار دهید یا از گوشی انتخاب کنید.</div>
     <div class="model-tools" style="margin-top:8px"><input id="modelUrl" value="./assets/ncc_building.glb" class="ltr"><button id="loadModelUrl">بارگذاری URL</button></div>
     <input id="modelFile" class="hiddenInput" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json">
     <button id="pickModelFile" style="margin-top:8px">انتخاب GLB از حافظه گوشی</button>
@@ -130,6 +139,6 @@
     <p id="relayStatus">Relay: آماده</p><div id="log"></div>
   </section>
 </main>
-<script type="module" src="./app.js?v=1071"></script>
+<script type="module" src="./app.js?v=1072"></script>
 </body>
 </html>

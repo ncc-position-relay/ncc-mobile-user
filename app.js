@@ -1,8 +1,8 @@
-import { NCC_CONFIG } from './config.js?v=1071';
-import { wgs84ToUtm39, utm39ToWgs84, normalizeHeading, projectStepCardinalSelfTest } from './utm.js?v=1071';
-import { HeadingFusion } from './headingFusion.js?v=1071';
-import { PdrEngine } from './pdr.js?v=1071';
-import { MobileMap2D } from './map2d.js?v=1071';
+import { NCC_CONFIG } from './config.js?v=1072';
+import { wgs84ToUtm39, utm39ToWgs84, normalizeHeading, projectStepCardinalSelfTest } from './utm.js?v=1072';
+import { HeadingFusion } from './headingFusion.js?v=1072';
+import { PdrEngine } from './pdr.js?v=1072';
+import { MobileMap2D } from './map2d.js?v=1072';
 
 const $ = id => document.getElementById(id);
 const PROFILE_KEY = 'ncc_mobile_profile_stage107';
@@ -21,6 +21,12 @@ let latestGps = null;
 let qrStream = null;
 let qrLoopActive = false;
 let qrDetector = null;
+let qrDecoderName = 'none';
+let qrJsQrLoadPromise = null;
+let qrScanBusy = false;
+let qrLastScanAt = 0;
+let qrDecodeCount = 0;
+let qrInvalidCount = 0;
 let scannedQrPoint = null;
 let userPhotoDataUrl = null;
 let motionBound = false;
@@ -28,7 +34,9 @@ let orientationBound = false;
 let lastRawHeading = null;
 let lastPosition = null;
 let activeSource = null;
-let pdrPublishChain = Promise.resolve();
+let pdrPublishRunning = false;
+let pdrPendingPublish = null;
+let pdrPublishDropped = 0;
 let pdrHeartbeatTimer = null;
 let map2d = null;
 let view3d = null;
@@ -222,9 +230,17 @@ const headingFusion = new HeadingFusion(NCC_CONFIG.pdr, {
     pdr?.setHeading?.(heading);
     updatePdrUi();
     $('deviceHeading').textContent = `${heading.toFixed(1)}°`;
-    $('fusionStatus').textContent = `${d.calibrated ? 'CAL' : 'UNCAL'} · ${d.sensorMode} · mag=${d.magneticQuality}`;
+    const age = Number.isFinite(d.absoluteAgeMs) ? `${Math.round(d.absoluteAgeMs)}ms` : '—';
+    $('fusionStatus').textContent = `${d.calibrated ? 'CAL' : 'WAIT'} · ${d.sensorMode} · ref=${d.magneticQuality}`;
+    $('fusionStatus').className = d.calibrated ? 'ok ltr' : 'ltr';
     $('gyroRate').textContent = `${Number(d.gyroRateDps || 0).toFixed(1)} °/s`;
-    $('magField').textContent = Number.isFinite(d.magneticFieldUt) ? `${d.magneticFieldUt.toFixed(1)} µT` : '—';
+    $('magField').textContent = Number.isFinite(d.magneticFieldUt)
+      ? `${d.magneticFieldUt.toFixed(1)} µT · ${d.magneticQuality}`
+      : (d.absoluteSource ? `RAW API unavailable · ${d.magneticQuality}` : '—');
+    if ($('headingReference')) $('headingReference').textContent = `${d.absoluteSource || '—'} · age ${age}`;
+  },
+  onAbsolute: (heading, source) => {
+    if ($('absoluteHeading')) $('absoluteHeading').textContent = `${heading.toFixed(1)}° · ${source}`;
   },
   onDiagnostic: text => log(`SENSOR ${text}`),
 });
@@ -284,10 +300,30 @@ function displayPdrState(state, appendPath = true) {
 
 function queuePdrPublish(state, source = 'pdr') {
   const snapshot = JSON.parse(JSON.stringify(state));
-  pdrPublishChain = pdrPublishChain
-    .then(() => publishPdrState(snapshot, source))
-    .catch(e => reportError('PDR SEND', e));
-  return pdrPublishChain;
+  if (pdrPendingPublish) pdrPublishDropped += 1;
+  pdrPendingPublish = { snapshot, source };
+  if (pdrPublishRunning) return Promise.resolve();
+
+  pdrPublishRunning = true;
+  return (async () => {
+    try {
+      while (pdrPendingPublish) {
+        const job = pdrPendingPublish;
+        pdrPendingPublish = null;
+        try {
+          await publishPdrState(job.snapshot, job.source);
+        } catch (e) {
+          reportError('PDR SEND', e);
+        }
+      }
+    } finally {
+      pdrPublishRunning = false;
+      if (pdrPublishDropped && $('relayStatus')) {
+        log(`PDR LIVE coalesced ${pdrPublishDropped} stale intermediate update(s) to keep the newest coordinate real-time.`);
+        pdrPublishDropped = 0;
+      }
+    }
+  })();
 }
 
 function startPdrHeartbeat() {
@@ -299,8 +335,9 @@ function stopPdrHeartbeat() { clearInterval(pdrHeartbeatTimer); pdrHeartbeatTime
 
 async function handlePdrStep(state) {
   displayPdrState(state, true);
-  // Every accepted step is queued, never dropped by a throttle. The public relay
-  // therefore carries the latest PDR coordinate to Backend/Cesium/XR.
+  // Every accepted step refreshes the latest-wins relay slot. If a network POST is
+  // still in flight, obsolete intermediate coordinates are coalesced so Cesium/XR
+  // receives the newest PDR position instead of a growing delayed queue.
   queuePdrPublish(state, 'pdr');
 }
 
@@ -436,15 +473,36 @@ async function compressFacePhoto(file) {
 function pointFromParams(params) {
   if (params.get('nccqr') !== '1') return null;
   const point = {
-    point_id: params.get('id') || 'NCC_QR', longitude: Number(params.get('lon')), latitude: Number(params.get('lat')),
-    utm_easting: Number(params.get('e')), utm_northing: Number(params.get('n')), height_m: Number(params.get('h')),
-    epsg: Number(params.get('epsg') || 32639), floor_id: params.get('floor') || null,
+    point_id: params.get('id') || 'NCC_QR',
+    longitude: Number(params.get('lon')),
+    latitude: Number(params.get('lat')),
+    utm_easting: Number(params.get('e')),
+    utm_northing: Number(params.get('n')),
+    height_m: Number(params.get('h') || 0),
+    epsg: Number(params.get('epsg') || 32639),
+    floor_id: params.get('floor') || null,
   };
   if (![point.longitude, point.latitude, point.utm_easting, point.utm_northing].every(Number.isFinite)) return null;
+  if (Math.abs(point.latitude) > 90 || Math.abs(point.longitude) > 180) return null;
   return point;
 }
 function parseQrUrl(text) {
-  try { return pointFromParams(new URL(text, location.href).searchParams); } catch { return null; }
+  try {
+    const raw = String(text || '').trim();
+    if (!raw) return null;
+    const point = pointFromParams(new URL(raw, location.href).searchParams);
+    return point;
+  } catch { return null; }
+}
+function setQrDebug(message, state = '') {
+  if ($('qrScanStatus')) {
+    $('qrScanStatus').textContent = message;
+    $('qrScanStatus').className = state ? state : 'ltr';
+  }
+}
+function showQrRaw(raw, validation = '') {
+  if ($('qrRaw')) $('qrRaw').textContent = raw ? String(raw).slice(0, 900) : '—';
+  if ($('qrValidation')) $('qrValidation').textContent = validation || '—';
 }
 function setQrCandidate(point) {
   scannedQrPoint = point;
@@ -453,44 +511,222 @@ function setQrCandidate(point) {
   $('qrCoordinates').textContent = `Lon ${point.longitude.toFixed(8)} · Lat ${point.latitude.toFixed(8)}`;
   $('qrUtm').textContent = `EPSG:${point.epsg} · E ${point.utm_easting.toFixed(3)} · N ${point.utm_northing.toFixed(3)}`;
   $('qrHeight').textContent = `H ${Number(point.height_m || 0).toFixed(3)} m${point.floor_id ? ` · ${point.floor_id}` : ''}`;
-  $('applyQr').disabled = false; $('cancelQr').disabled = false;
+  $('applyQr').disabled = false;
+  $('cancelQr').disabled = false;
+  setQrDebug(`QR FOUND · ${point.point_id}`, 'ok ltr');
+  if ($('qrValidation')) $('qrValidation').textContent = 'PASS';
   log(`QR READY ${point.point_id}`);
 }
-async function ensureQrDecoder() {
-  if ('BarcodeDetector' in window) {
-    try { qrDetector = new BarcodeDetector({ formats: ['qr_code'] }); return 'barcode'; } catch {}
-  }
-  if (window.jsQR) return 'jsqr';
-  const urls = ['https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js','https://unpkg.com/jsqr@1.4.0/dist/jsQR.js'];
-  for (const url of urls) {
-    try {
-      await new Promise((resolve, reject) => { const s=document.createElement('script');s.src=url;s.onload=resolve;s.onerror=reject;document.head.append(s); });
-      if (window.jsQR) return 'jsqr';
-    } catch {}
-  }
-  throw new Error('QR decoder در دسترس نیست. از دوربین عادی گوشی برای بازکردن QR URL استفاده کنید.');
+
+async function loadJsQrFallback() {
+  if (window.jsQR) return true;
+  if (qrJsQrLoadPromise) return qrJsQrLoadPromise;
+  qrJsQrLoadPromise = (async () => {
+    const urls = [
+      'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js',
+      'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js',
+    ];
+    for (const url of urls) {
+      try {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = url;
+          s.async = true;
+          s.crossOrigin = 'anonymous';
+          s.onload = resolve;
+          s.onerror = () => { s.remove(); reject(new Error(`load failed: ${url}`)); };
+          document.head.append(s);
+        });
+        if (window.jsQR) return true;
+      } catch (e) {
+        log(`QR fallback load: ${e.message}`);
+      }
+    }
+    return false;
+  })();
+  return qrJsQrLoadPromise;
 }
-async function decodeQrCanvas(canvas) {
-  if (qrDetector) {
-    const rows = await qrDetector.detect(canvas); if (rows?.[0]?.rawValue) return rows[0].rawValue;
+
+async function ensureQrDecoder() {
+  qrDetector = null;
+  let nativeOk = false;
+  if ('BarcodeDetector' in window) {
+    try {
+      const formats = await BarcodeDetector.getSupportedFormats?.().catch?.(() => []) || [];
+      if (!formats.length || formats.includes('qr_code')) {
+        qrDetector = new BarcodeDetector({ formats: ['qr_code'] });
+        nativeOk = true;
+      }
+    } catch (e) {
+      log(`BarcodeDetector unavailable: ${e.message}`);
+    }
   }
+
+  // IMPORTANT Stage107.2 fix: load jsQR EVEN WHEN BarcodeDetector exists.
+  // Stage107 returned early after constructing BarcodeDetector, so a browser
+  // whose native detector could not decode a frame never received a real fallback.
+  const jsQrOk = await loadJsQrFallback();
+  if (!nativeOk && !jsQrOk) {
+    qrDecoderName = 'none';
+    if ($('qrDecoderStatus')) $('qrDecoderStatus').textContent = 'NONE';
+    throw new Error('هیچ QR Decoder فعالی در دسترس نیست. اتصال اینترنت و HTTPS را بررسی کنید.');
+  }
+  qrDecoderName = nativeOk && jsQrOk ? 'BarcodeDetector + jsQR' : nativeOk ? 'BarcodeDetector' : 'jsQR';
+  if ($('qrDecoderStatus')) $('qrDecoderStatus').textContent = qrDecoderName;
+  log(`QR DECODER ${qrDecoderName}`);
+  return qrDecoderName;
+}
+
+function canvasCrop(sourceCanvas, sx, sy, sw, sh, maxSide = 960) {
+  const scale = Math.min(1, maxSide / Math.max(sw, sh));
+  const out = document.createElement('canvas');
+  out.width = Math.max(2, Math.round(sw * scale));
+  out.height = Math.max(2, Math.round(sh * scale));
+  const ctx = out.getContext('2d', { willReadFrequently: true, alpha: false });
+  ctx.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, out.width, out.height);
+  return out;
+}
+
+async function decodeQrCanvas(canvas) {
+  qrDecodeCount += 1;
+  if ($('qrFrameCount')) $('qrFrameCount').textContent = String(qrDecodeCount);
+
+  // Native decoder first on the original frame and then a centered crop.
+  if (qrDetector) {
+    try {
+      const rows = await qrDetector.detect(canvas);
+      if (rows?.[0]?.rawValue) return { raw: rows[0].rawValue, decoder: 'BarcodeDetector' };
+    } catch (e) {
+      log(`QR native detect: ${e.message}`);
+    }
+  }
+
   if (window.jsQR) {
-    const ctx = canvas.getContext('2d', { willReadFrequently: true }); const img = ctx.getImageData(0,0,canvas.width,canvas.height);
-    return window.jsQR(img.data,img.width,img.height,{ inversionAttempts:'attemptBoth' })?.data || null;
+    const attempts = [];
+    const w = canvas.width, h = canvas.height;
+    attempts.push(canvasCrop(canvas, 0, 0, w, h, 960));
+    const side = Math.min(w, h) * 0.86;
+    attempts.push(canvasCrop(canvas, (w - side) / 2, (h - side) / 2, side, side, 1000));
+    for (const candidate of attempts) {
+      const ctx = candidate.getContext('2d', { willReadFrequently: true });
+      const img = ctx.getImageData(0, 0, candidate.width, candidate.height);
+      const result = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
+      if (result?.data) return { raw: result.data, decoder: 'jsQR' };
+    }
   }
   return null;
 }
+
+async function processDecodedQr(decoded) {
+  if (!decoded?.raw) return false;
+  showQrRaw(decoded.raw, 'CHECKING');
+  if ($('qrDecoderStatus')) $('qrDecoderStatus').textContent = decoded.decoder || qrDecoderName;
+  const point = parseQrUrl(decoded.raw);
+  if (!point) {
+    qrInvalidCount += 1;
+    if ($('qrValidation')) $('qrValidation').textContent = `FAIL (${qrInvalidCount})`;
+    setQrDebug('QR خوانده شد ولی Payload معتبر NCC نیست.', 'bad ltr');
+    log(`QR INVALID PAYLOAD: ${String(decoded.raw).slice(0, 300)}`);
+    return false;
+  }
+  setQrCandidate(point);
+  return true;
+}
+
 async function startQrCamera() {
   await ensureQrDecoder();
-  qrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width:{ideal:1280}, height:{ideal:720} }, audio:false });
-  $('qrVideo').srcObject = qrStream; $('qrVideo').style.display='block'; await $('qrVideo').play();
-  $('startQr').disabled=true; $('stopQr').disabled=false; qrLoopActive=true;
-  const canvas=$('qrCanvas'),ctx=canvas.getContext('2d',{willReadFrequently:true});
-  const loop=async()=>{ if(!qrLoopActive)return; const v=$('qrVideo'); if(v.readyState>=2&&v.videoWidth){canvas.width=v.videoWidth;canvas.height=v.videoHeight;ctx.drawImage(v,0,0); try{const raw=await decodeQrCanvas(canvas);const p=raw&&parseQrUrl(raw);if(p){setQrCandidate(p);stopQrCamera();return;}}catch{}} requestAnimationFrame(loop);};
+  stopQrCamera();
+  scannedQrPoint = null;
+  $('applyQr').disabled = true;
+  $('cancelQr').disabled = true;
+  $('qrResult').style.display = 'none';
+  showQrRaw('', 'WAIT');
+  setQrDebug('CAMERA STARTING…', 'ltr');
+
+  qrStream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 30, max: 30 },
+    },
+    audio: false,
+  });
+  $('qrVideo').srcObject = qrStream;
+  $('qrVideo').style.display = 'block';
+  await $('qrVideo').play();
+  const track = qrStream.getVideoTracks()[0];
+  const settings = track?.getSettings?.() || {};
+  if ($('qrCameraInfo')) $('qrCameraInfo').textContent = `${settings.width || $('qrVideo').videoWidth || '?'}×${settings.height || $('qrVideo').videoHeight || '?'} · ${settings.facingMode || 'camera'}`;
+
+  $('startQr').disabled = true;
+  $('stopQr').disabled = false;
+  qrLoopActive = true;
+  qrScanBusy = false;
+  qrLastScanAt = 0;
+  setQrDebug('SCANNING… QR را ثابت و کامل داخل کادر نگه دارید.', 'ok ltr');
+
+  const canvas = $('qrCanvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true, alpha: false });
+  const loop = async now => {
+    if (!qrLoopActive) return;
+    const v = $('qrVideo');
+    if (!qrScanBusy && now - qrLastScanAt >= 120 && v.readyState >= 2 && v.videoWidth) {
+      qrScanBusy = true;
+      qrLastScanAt = now;
+      try {
+        // Downscale camera frame before JS decoding to reduce CPU/thermal throttling.
+        const maxSide = 1280;
+        const scale = Math.min(1, maxSide / Math.max(v.videoWidth, v.videoHeight));
+        canvas.width = Math.max(2, Math.round(v.videoWidth * scale));
+        canvas.height = Math.max(2, Math.round(v.videoHeight * scale));
+        ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+        const decoded = await decodeQrCanvas(canvas);
+        if (decoded && await processDecodedQr(decoded)) {
+          stopQrCamera();
+          return;
+        }
+      } catch (e) {
+        setQrDebug(`SCAN ERROR · ${e.message}`, 'bad ltr');
+        log(`QR SCAN ERROR ${e.stack || e}`);
+      } finally {
+        qrScanBusy = false;
+      }
+    }
+    requestAnimationFrame(loop);
+  };
   requestAnimationFrame(loop);
 }
-function stopQrCamera(){qrLoopActive=false;if(qrStream){for(const t of qrStream.getTracks())t.stop();qrStream=null;}$('qrVideo').srcObject=null;$('qrVideo').style.display='none';$('startQr').disabled=false;$('stopQr').disabled=true;}
-async function scanQrImage(file){ await ensureQrDecoder(); const image=await fileToImage(file); const canvas=$('qrCanvas'); const max=1400,scale=Math.min(1,max/Math.max(image.width||image.naturalWidth,image.height||image.naturalHeight)); canvas.width=Math.max(1,Math.round((image.width||image.naturalWidth)*scale));canvas.height=Math.max(1,Math.round((image.height||image.naturalHeight)*scale));canvas.getContext('2d').drawImage(image,0,0,canvas.width,canvas.height);const raw=await decodeQrCanvas(canvas);image.close?.();if(!raw)throw new Error('QR در تصویر پیدا نشد.');const p=parseQrUrl(raw);if(!p)throw new Error('QR متعلق به NCC Position نیست.');setQrCandidate(p);}
+
+function stopQrCamera() {
+  qrLoopActive = false;
+  qrScanBusy = false;
+  if (qrStream) {
+    for (const t of qrStream.getTracks()) t.stop();
+    qrStream = null;
+  }
+  $('qrVideo').srcObject = null;
+  $('qrVideo').style.display = 'none';
+  $('startQr').disabled = false;
+  $('stopQr').disabled = true;
+}
+
+async function scanQrImage(file) {
+  await ensureQrDecoder();
+  const image = await fileToImage(file);
+  const canvas = $('qrCanvas');
+  const iw = image.width || image.naturalWidth;
+  const ih = image.height || image.naturalHeight;
+  const max = 1600;
+  const scale = Math.min(1, max / Math.max(iw, ih));
+  canvas.width = Math.max(2, Math.round(iw * scale));
+  canvas.height = Math.max(2, Math.round(ih * scale));
+  canvas.getContext('2d', { willReadFrequently: true }).drawImage(image, 0, 0, canvas.width, canvas.height);
+  const decoded = await decodeQrCanvas(canvas);
+  image.close?.();
+  if (!decoded) throw new Error('QR در تصویر پیدا نشد.');
+  if (!(await processDecodedQr(decoded))) throw new Error('QR خوانده شد ولی متعلق به NCC Position نیست یا پارامترهای آن ناقص است.');
+}
 
 function stopGpsLive() { if (gpsWatchId != null) navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId=null; $('stopGps').disabled=true; $('startGps').disabled=false; }
 function gpsOptions(){return {enableHighAccuracy:true,timeout:15000,maximumAge:1000};}
@@ -503,37 +739,66 @@ async function gpsOnceAndSend(){ const pos=await new Promise((resolve,reject)=>n
 function startGpsLive(){ stopGpsLive(); gpsWatchId=navigator.geolocation.watchPosition(pos=>{const p=showGps(pos);publish({latitude:p.latitude,longitude:p.longitude,altitude:p.altitude,display_altitude:p.h,accuracy:p.accuracy,altitudeAccuracy:p.altitudeAccuracy,speed:p.speed,heading:p.headingDeg,utm_easting:p.easting,utm_northing:p.northing},'gps').catch(e=>reportError('GPS LIVE SEND',e));},e=>reportError('GPS',e),gpsOptions()); $('stopGps').disabled=false;$('startGps').disabled=true; }
 
 async function requestSensorPermission() {
-  let motionOk=true,orientationOk=true;
-  if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') motionOk=(await DeviceMotionEvent.requestPermission())==='granted';
-  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') orientationOk=(await DeviceOrientationEvent.requestPermission())==='granted';
-  sensorPermissionGranted=motionOk&&orientationOk;
-  $('motionPermission').textContent=`Motion: ${motionOk?'YES':'NO'}`;$('motionPermission').className=`pill ${motionOk?'ok':'bad'}`;
-  $('orientationPermission').textContent=`Heading: ${orientationOk?'YES':'NO'}`;$('orientationPermission').className=`pill ${orientationOk?'ok':'bad'}`;
+  let motionOk = true, orientationOk = true;
+  if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+    motionOk = (await DeviceMotionEvent.requestPermission()) === 'granted';
+  }
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    orientationOk = (await DeviceOrientationEvent.requestPermission()) === 'granted';
+  }
+  sensorPermissionGranted = motionOk && orientationOk;
+  $('motionPermission').textContent = `Motion: ${motionOk ? 'YES' : 'NO'}`;
+  $('motionPermission').className = `pill ${motionOk ? 'ok' : 'bad'}`;
+  $('orientationPermission').textContent = `Heading: ${orientationOk ? 'YES' : 'NO'}`;
+  $('orientationPermission').className = `pill ${orientationOk ? 'ok' : 'bad'}`;
+  if (!sensorPermissionGranted) throw new Error('مجوز Motion/Orientation کامل صادر نشد.');
+
   bindSensorEvents();
-  $('fusionStatus').textContent='WAIT MAG/ABS HEADING';
-  try { await headingFusion.startOptionalGenericSensors(); } catch (e) { log(`GENERIC SENSOR: ${e.message}`); }
-  if(!sensorPermissionGranted) throw new Error('مجوز Motion/Orientation کامل صادر نشد.');
+  $('fusionStatus').textContent = 'WAIT ABSOLUTE NORTH REFERENCE';
+  $('fusionStatus').className = 'ltr';
+  try {
+    const started = await headingFusion.startOptionalGenericSensors();
+    if ($('sensorCapabilities')) $('sensorCapabilities').textContent = started.length ? started.join(' + ') : 'DeviceOrientation events';
+  } catch (e) {
+    log(`GENERIC SENSOR: ${e.message}`);
+  }
+
   setTimeout(() => {
-    if (!Number.isFinite(headingFusion.heading())) {
-      $('fusionStatus').textContent='NO ABS HEADING · گوشی را به شکل 8 حرکت دهید و سنسورها را دوباره فعال کنید';
-      $('fusionStatus').className='bad';
-      log('HEADING: no absolute/magnetic heading sample received after sensor enable');
+    const snap = headingFusion.snapshot();
+    if (!snap.calibrated) {
+      $('fusionStatus').textContent = 'NO ABS HEADING · گوشی را به شکل 8 حرکت دهید؛ سپس سنسورها را دوباره فعال کنید';
+      $('fusionStatus').className = 'bad ltr';
+      log(`HEADING WAIT: absolute source not ready; relative orientation is intentionally rejected as north reference.`);
     }
-  }, 2500);
+  }, 3500);
   return true;
 }
 function bindSensorEvents() {
-  if(!motionBound){ window.addEventListener('devicemotion',onMotion,{passive:true}); motionBound=true; }
-  if(!orientationBound){ window.addEventListener('deviceorientationabsolute',onOrientation,true); window.addEventListener('deviceorientation',onOrientation,true); orientationBound=true; }
+  if (!motionBound) {
+    window.addEventListener('devicemotion', onMotion, { passive: true });
+    motionBound = true;
+  }
+  if (!orientationBound) {
+    window.addEventListener('deviceorientationabsolute', onAbsoluteOrientation, true);
+    window.addEventListener('deviceorientation', onRelativeOrientation, true);
+    orientationBound = true;
+  }
 }
-function onMotion(event){
-  headingFusion.pushMotion(event,event.timeStamp || performance.now());
-  const a=event.accelerationIncludingGravity || event.acceleration; if(!a)return;
-  pdr.pushAcceleration(a.x,a.y,a.z,event.timeStamp || performance.now());
+function onMotion(event) {
+  headingFusion.pushMotion(event, event.timeStamp || performance.now());
+  const a = event.accelerationIncludingGravity || event.acceleration;
+  if (!a) return;
+  pdr.pushAcceleration(a.x, a.y, a.z, event.timeStamp || performance.now());
 }
-function onOrientation(event){
-  headingFusion.pushOrientation(event,event.timeStamp || performance.now());
+function onAbsoluteOrientation(event) {
+  headingFusion.pushOrientation(event, event.timeStamp || performance.now(), { forceAbsolute: true });
 }
+function onRelativeOrientation(event) {
+  // event.absolute=true is still accepted; false means arbitrary reference and
+  // therefore must not be used to establish North.
+  headingFusion.pushOrientation(event, event.timeStamp || performance.now(), { forceAbsolute: false });
+}
+
 function calibrateHeadingFromUi(){
   const known=normalizeHeading(numberOr($('initialHeading').value,90));
   const snap=headingFusion.calibrate(known);
@@ -564,7 +829,7 @@ async function ensure3D(){
   if(view3dInitPromise) return view3dInitPromise;
   view3dInitPromise=(async()=>{
     $('modelStatus').textContent='در حال بارگذاری موتور Three.js…';
-    const { MobileBuilding3D } = await import('./view3d.js?v=1071');
+    const { MobileBuilding3D } = await import('./view3d.js?v=1072');
     const instance=new MobileBuilding3D($('view3d'),{
       ...NCC_CONFIG.model, transform:NCC_CONFIG.modelRuntimeTransform, qrPoints:NCC_CONFIG.qrPoints,
       verticalOffsetM:numberOr($('modelVerticalOffset').value,0),
@@ -602,7 +867,7 @@ function applyQrAsAnchor() {
   setSource('qr',q.point_id);
   publish({latitude:q.latitude,longitude:q.longitude,display_altitude:q.height_m,heading:currentHeading(),utm_easting:q.utm_easting,utm_northing:q.utm_northing},'qr',{qr_point_id:q.point_id,qr_epsg:q.epsg,display_altitude:q.height_m}).catch(e=>reportError('QR SEND',e));
   scannedQrPoint=null;$('applyQr').disabled=true;$('cancelQr').disabled=true;$('qrResult').style.display='none';
-  log(`PDR ANCHOR ${q.point_id} · اکنون جهت اولیه را ثبت کنید.`);
+  log(`PDR ANCHOR ${q.point_id} · Heading اولیه به‌صورت خودکار از مرجع مطلق گوشی استفاده می‌شود.`);
 }
 
 function cancelQr(){scannedQrPoint=null;$('applyQr').disabled=true;$('cancelQr').disabled=true;$('qrResult').style.display='none';}
@@ -628,7 +893,7 @@ $('sendPhoto').onclick=()=>publishPhoto().catch(e=>reportError('PHOTO SEND',e));
 $('clearPhoto').onclick=()=>{userPhotoDataUrl=null;localStorage.removeItem(PHOTO_KEY);updatePhotoPreview();log('LOCAL PHOTO CLEARED');};
 $('enableSensors').onclick=()=>requestSensorPermission().then(()=>log('SENSORS ENABLED')).catch(e=>reportError('SENSOR',e));
 $('calibrateHeading').onclick=()=>{try{calibrateHeadingFromUi();}catch(e){reportError('HEADING CAL',e);}};
-$('clearHeadingCalibration').onclick=()=>{headingFusion.clearCalibration();updatePdrUi();$('fusionStatus').textContent='UNCAL';log('HEADING CALIBRATION CLEARED');};
+$('clearHeadingCalibration').onclick=()=>{headingFusion.clearCalibration();updatePdrUi();$('fusionStatus').textContent='WAIT ABSOLUTE';$('fusionStatus').className='ltr';log('HEADING OVERRIDE/AUTO INIT CLEARED');};
 $('gpsOnce').onclick=()=>gpsOnceAndSend().catch(e=>reportError('GPS ONCE',e));
 $('startGps').onclick=()=>{try{startGpsLive();}catch(e){reportError('GPS LIVE',e);}};
 $('stopGps').onclick=stopGpsLive;
@@ -639,7 +904,7 @@ $('applyQr').onclick=()=>{try{applyQrAsAnchor();}catch(e){reportError('QR APPLY'
 $('cancelQr').onclick=cancelQr;
 $('scanQrImage').onclick=()=>$('qrImageInput').click();
 $('qrImageInput').onchange=e=>{const f=e.target.files?.[0];if(f)scanQrImage(f).catch(err=>reportError('QR IMAGE',err));e.target.value='';};
-$('startPdr').onclick=async()=>{try{if(!sensorPermissionGranted)await requestSensorPermission();if(!headingFusion.calibrated)throw new Error('ابتدا جهت اولیه را ثبت کنید.');pdr.setConfig(pdrConfigFromUi());pdr.setHeading(currentHeading());pdr.start();startPdrHeartbeat();updatePdrUi();setSource('pdr');queuePdrPublish(pdr.snapshot(),'pdr');log('PDR STARTED');}catch(e){reportError('PDR START',e);}};
+$('startPdr').onclick=async()=>{try{if(!sensorPermissionGranted)await requestSensorPermission();if(!headingFusion.calibrated)throw new Error('Heading مطلق هنوز آماده نیست. ابتدا «فعال‌کردن سنسورها» را بزنید و منتظر CAL بمانید.');pdr.setConfig(pdrConfigFromUi());pdr.setHeading(currentHeading());pdr.start();startPdrHeartbeat();updatePdrUi();setSource('pdr');queuePdrPublish(pdr.snapshot(),'pdr');log('PDR STARTED');}catch(e){reportError('PDR START',e);}};
 $('stopPdr').onclick=()=>{pdr.stop();stopPdrHeartbeat();updatePdrUi();queuePdrPublish(pdr.snapshot(),'pdr');log('PDR STOPPED');};
 $('resetPdr').onclick=()=>pdr.resetToAnchor();
 for(const id of ['stepLength','peakThreshold','maxPeak','minStepInterval','resetThreshold']) $(id).onchange=()=>pdr.setConfig(pdrConfigFromUi());
@@ -668,12 +933,12 @@ async function boot(){
   $('motionPermission').textContent='Motion: tap Enable';$('orientationPermission').textContent='Heading: tap Enable';
   loadProfile();
   pdr.setConfig(pdrConfigFromUi());
-  lastRawHeading=normalizeHeading(numberOr($('manualHeading').value,90));pdr.setHeading(lastRawHeading);
+  lastRawHeading=normalizeHeading(numberOr($('manualHeading').value,90));
   updatePdrUi();
   await initViewers();
   drawAccelChart();
-  log('NCC MOBILE STAGE107 READY · QR + PDR + 2D + 3D + LIVE RELAY');
+  log('NCC MOBILE STAGE107.2 READY · QR + PDR + 2D + 3D + LIVE RELAY');
 }
 boot().catch(e=>reportError('BOOT',e));
 
-const __cardinalTest = projectStepCardinalSelfTest(); if(!__cardinalTest.ok) console.error('PDR CARDINAL SELF TEST FAILED',__cardinalTest); else console.info('[NCC Stage107] PDR cardinal convention OK: 0=N 90=E 180=S 270=W');
+const __cardinalTest = projectStepCardinalSelfTest(); if(!__cardinalTest.ok) console.error('PDR CARDINAL SELF TEST FAILED',__cardinalTest); else console.info('[NCC Stage107.2] PDR cardinal convention OK: 0=N 90=E 180=S 270=W');
