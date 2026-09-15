@@ -1,4 +1,4 @@
-// WGS84 UTM conversion. Stage106 only uses Zone 39N for NCC production data,
+// WGS84 UTM conversion. Stage107 only uses Zone 39N for NCC production data,
 // but the functions accept any standard UTM zone and hemisphere.
 const A = 6378137.0;
 const F = 1 / 298.257223563;
@@ -83,6 +83,7 @@ export function runtimeUtmToModel(easting, northing, transform) {
   };
 }
 
+// NCC azimuth convention: 0=N, 90=E, 180=S, 270=W.
 export function projectStep(easting, northing, stepLengthM, headingDeg) {
   const heading = rad(normalizeHeading(headingDeg));
   return {
@@ -97,4 +98,21 @@ export function wgs84ToUtm39(lonDeg, latDeg) {
 
 export function utm39ToWgs84(easting, northing) {
   return utmToWgs84(easting, northing, 39, true);
+}
+
+
+export function projectStepCardinalSelfTest(tol = 1e-9) {
+  const o = { e: 100, n: 200, l: 1 };
+  const cases = [
+    [0,   100, 201, 'N'],
+    [90,  101, 200, 'E'],
+    [180, 100, 199, 'S'],
+    [270,  99, 200, 'W'],
+  ];
+  const failures = [];
+  for (const [h,e,n,label] of cases) {
+    const p = projectStep(o.e,o.n,o.l,h);
+    if (Math.abs(p.easting-e)>tol || Math.abs(p.northing-n)>tol) failures.push({h,label,got:p,expected:{e,n}});
+  }
+  return { ok: failures.length === 0, failures };
 }

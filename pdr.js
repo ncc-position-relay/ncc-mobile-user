@@ -37,7 +37,7 @@ export class PdrEngine {
     this.prev1 = null;
     this.armed = true;
     this.headingDeg = 0;
-    this.headingFilter = new CircularHeadingFilter(this.cfg.headingAlpha ?? 0.22);
+    this.headingFilter = new CircularHeadingFilter(this.cfg.headingAlpha ?? 1.0);
     this.samples = [];
     this.stepTimes = [];
   }
@@ -48,7 +48,7 @@ export class PdrEngine {
   }
 
   setHeading(rawHeadingDeg) {
-    this.headingDeg = this.headingFilter.push(rawHeadingDeg);
+    this.headingDeg = normalizeHeading(rawHeadingDeg); // Stage107: HeadingFusion already performs temporal fusion/smoothing.
     this.cb.onHeading?.(this.headingDeg);
     return this.headingDeg;
   }
