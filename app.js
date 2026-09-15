@@ -45,7 +45,7 @@ let viewerMode = '2d';
 let followUser = true;
 let sensorPermissionGranted = false;
 
-// Stage107.3 transport state. PDR may run at sensor rate, while Internet publishing
+// Stage107.4 transport state. PDR may run at sensor rate, while Internet publishing
 // is coalesced to the newest coordinate so public relay limits are never hit by
 // one request per step.
 let pdrPublishTimer = null;
@@ -527,51 +527,108 @@ async function relayPost(message) {
   const topic = cleanTopic($('sessionCode').value);
   if (topic.length < 20) throw new Error('Session Code معتبر نیست یا خیلی کوتاه است.');
   sessionStorage.setItem(SESSION_KEY, topic);
+
   const body = JSON.stringify(message);
-  if (body.length > MAX_RELAY_MESSAGE_CHARS) throw new Error(`پیام برای Relay بزرگ است (${body.length} chars).`);
+  if (body.length > MAX_RELAY_MESSAGE_CHARS) {
+    throw new Error(`پیام برای Relay بزرگ است (${body.length} chars).`);
+  }
 
   if (Date.now() < relayBackoffUntil) {
-    const error = new Error(`Relay در Backoff است؛ ${Math.ceil((relayBackoffUntil - Date.now()) / 1000)} ثانیه باقی مانده.`);
+    const error = new Error(
+      `Relay در Backoff است؛ ${Math.ceil((relayBackoffUntil - Date.now()) / 1000)} ثانیه باقی مانده.`
+    );
     error.code = 'RELAY_BACKOFF';
     throw error;
   }
 
   const topicUrl = `${NCC_CONFIG.relayBase}/${encodeURIComponent(topic)}`;
   let response;
+
   try {
-    response = await relayFetchWithTimeout(topicUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8', 'X-NCC-Stage': '107.3' },
-      body,
-    });
-    // Some gateways/proxies reject topic-path POSTs. Official ntfy also accepts
-    // JSON publishing on the root endpoint, so transparently fall back there.
-    if (response.status === 404 || response.status === 405) {
-      response = await relayFetchWithTimeout(`${NCC_CONFIG.relayBase}/`, {
+    /*
+     * Stage107.4 critical fix:
+     * The official ntfy browser example is a plain POST with only a body.
+     * Do NOT add X-NCC-* or application/json headers here. A custom header
+     * forces a CORS preflight (OPTIONS) before the real POST, which is exactly
+     * the point that timed out on the tested mobile network.
+     */
+    response = await relayFetchWithTimeout(
+      topicUrl,
+      {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json;charset=UTF-8', 'X-NCC-Stage': '107.3' },
-        body: JSON.stringify({ topic, message: body }),
-      });
+        body,
+        mode: 'cors',
+        credentials: 'omit',
+        redirect: 'follow',
+        referrerPolicy: 'no-referrer',
+      },
+      Number(NCC_CONFIG.relay?.publishTimeoutMs || 30000),
+    );
+  } catch (firstError) {
+    /*
+     * Last-resort browser transport:
+     * If the network/proxy lets the POST leave the phone but CORS hides the
+     * response, no-cors still sends the payload. The returned response is
+     * opaque, so this is treated as "sent-unverified", not a verified ACK.
+     */
+    try {
+      await relayFetchWithTimeout(
+        topicUrl,
+        {
+          method: 'POST',
+          body,
+          mode: 'no-cors',
+          credentials: 'omit',
+          redirect: 'follow',
+          referrerPolicy: 'no-referrer',
+        },
+        Number(NCC_CONFIG.relay?.publishTimeoutMs || 30000),
+      );
+
+      clearRelayBackoff();
+      relayNextAllowedAt = Math.max(relayNextAllowedAt, Date.now() + relayIntervalMs());
+      sentCount += 1;
+      $('sentCount').textContent = sentCount;
+      $('lastSend').textContent = `${new Date().toLocaleTimeString()} *`;
+      $('relayStatus').textContent =
+        'Relay: پیام از مسیر no-cors ارسال شد؛ ACK مرورگر قابل مشاهده نیست، دریافت PC را بررسی کنید.';
+      $('relayStatus').className = 'warn';
+      log(`RELAY SENT-UNVERIFIED no-cors · seq=${message.sequence ?? '-'} · first=${firstError?.name || firstError}`);
+      updateRelayUi();
+      return body.length;
+    } catch (secondError) {
+      relayConsecutiveFailures += 1;
+      const base = Number(NCC_CONFIG.relay?.networkRetryMs || 10000);
+      setRelayBackoff(
+        Math.min(base * Math.max(1, relayConsecutiveFailures), 60000),
+        'fetch/network',
+      );
+      const why = secondError?.name === 'AbortError'
+        ? 'timeout'
+        : (secondError?.message || secondError);
+      throw new Error(`ارتباط با Relay برقرار نشد: ${why}`);
     }
-  } catch (error) {
-    relayConsecutiveFailures += 1;
-    const base = Number(NCC_CONFIG.relay?.networkRetryMs || 8000);
-    setRelayBackoff(Math.min(base * Math.max(1, relayConsecutiveFailures), 60000), 'fetch/network');
-    throw new Error(`ارتباط با Relay برقرار نشد: ${error?.name === 'AbortError' ? 'timeout' : (error?.message || error)}`);
   }
 
   if (response.status === 429) {
     relayConsecutiveFailures += 1;
     const requested = retryAfterMs(response);
-    const backoff = requested ?? Number(NCC_CONFIG.relay?.rateLimitBackoffMs || 60000);
+    const backoff =
+      requested ?? Number(NCC_CONFIG.relay?.rateLimitBackoffMs || 60000);
     setRelayBackoff(backoff, 'HTTP 429 rate limit');
-    const error = new Error(`Relay HTTP 429؛ ارسال خودکار تا پایان Backoff متوقف شد.`);
+    const error = new Error(
+      'Relay HTTP 429؛ ارسال خودکار تا پایان Backoff متوقف شد.'
+    );
     error.code = 'RELAY_429';
     throw error;
   }
+
   if (!response.ok) {
     relayConsecutiveFailures += 1;
-    setRelayBackoff(Number(NCC_CONFIG.relay?.networkRetryMs || 8000), `HTTP ${response.status}`);
+    setRelayBackoff(
+      Number(NCC_CONFIG.relay?.networkRetryMs || 10000),
+      `HTTP ${response.status}`,
+    );
     throw new Error(`Relay HTTP ${response.status}`);
   }
 
@@ -583,6 +640,30 @@ async function relayPost(message) {
   $('relayStatus').className = 'ok';
   updateRelayUi();
   return body.length;
+}
+async function testRelayConnectivity() {
+  const topic = cleanTopic($('sessionCode').value);
+  if (topic.length < 20) throw new Error('ابتدا Session Code معتبر را وارد کنید.');
+  const url = `${NCC_CONFIG.relayBase}/${encodeURIComponent(topic)}`;
+
+  $('relayStatus').textContent = 'Relay Test: در حال ارسال پیام تست...';
+  $('relayStatus').className = '';
+
+  const probe = {
+    type: 'ncc_relay_probe',
+    schema_version: 1,
+    stage: NCC_CONFIG.stage,
+    client_timestamp: new Date().toISOString(),
+    profile: {
+      user_id: String($('userId')?.value || 'PHONE_TEST').trim() || 'PHONE_TEST',
+    },
+  };
+
+  await relayPost(probe);
+  $('relayStatus').textContent =
+    `Relay Test: ارسال انجام شد · ${new URL(NCC_CONFIG.relayBase).host}`;
+  $('relayStatus').className = 'ok';
+  log('RELAY CONNECTIVITY TEST SENT');
 }
 
 async function publish(coords, source = 'gps', extra = {}) {
@@ -722,7 +803,7 @@ async function ensureQrDecoder() {
     }
   }
 
-  // IMPORTANT Stage107.3 fix: load jsQR EVEN WHEN BarcodeDetector exists.
+  // IMPORTANT Stage107.4 fix: load jsQR EVEN WHEN BarcodeDetector exists.
   // Stage107 returned early after constructing BarcodeDetector, so a browser
   // whose native detector could not decode a frame never received a real fallback.
   const jsQrOk = await loadJsQrFallback();
@@ -1052,6 +1133,7 @@ $('photoInput').onchange=async e=>{try{const f=e.target.files?.[0];if(!f)return;
 $('sendPhoto').onclick=()=>publishPhoto().catch(e=>reportError('PHOTO SEND',e));
 $('clearPhoto').onclick=()=>{userPhotoDataUrl=null;localStorage.removeItem(PHOTO_KEY);updatePhotoPreview();log('LOCAL PHOTO CLEARED');};
 $('sendCurrentPosition').onclick=()=>sendCurrentPositionNow().catch(e=>reportError('MANUAL SEND',e));
+$('testRelay')?.addEventListener('click',()=>testRelayConnectivity().catch(e=>reportError('RELAY TEST',e)));
 $('retryRelay').onclick=()=>{clearRelayBackoff();relayNextAllowedAt=0;sendCurrentPositionNow().catch(e=>reportError('RELAY RETRY',e));};
 $('clearRelayBackoff').onclick=()=>{clearRelayBackoff();relayNextAllowedAt=0;$('relayStatus').textContent='Relay Backoff پاک شد؛ ارسال بعدی مجاز است.';$('relayStatus').className='ok';};
 $('autoPdrSend').onchange=()=>{saveProfile();updateRelayUi();if(autoPdrSendEnabled()&&pdr.active)queuePdrPublish(pdr.snapshot(),'pdr-enable',true);};
@@ -1104,8 +1186,8 @@ async function boot(){
   updatePdrUi();
   await initViewers();
   drawAccelChart();
-  log('NCC MOBILE STAGE107.3 READY · QR + PDR + SAFE-RATE ONLINE RELAY + SYSTEM AVATAR');
+  log('NCC MOBILE STAGE107.4 READY · QR + PDR + SAFE-RATE ONLINE RELAY + SYSTEM AVATAR');
 }
 boot().catch(e=>reportError('BOOT',e));
 
-const __cardinalTest = projectStepCardinalSelfTest(); if(!__cardinalTest.ok) console.error('PDR CARDINAL SELF TEST FAILED',__cardinalTest); else console.info('[NCC Stage107.3] PDR cardinal convention OK: 0=N 90=E 180=S 270=W');
+const __cardinalTest = projectStepCardinalSelfTest(); if(!__cardinalTest.ok) console.error('PDR CARDINAL SELF TEST FAILED',__cardinalTest); else console.info('[NCC Stage107.4] PDR cardinal convention OK: 0=N 90=E 180=S 270=W');

@@ -1,4 +1,4 @@
-// NCC Stage107.3 heading fusion.
+// NCC Stage107.4 heading fusion.
 // PDR azimuth convention: 0=N, 90=E, 180=S, 270=W.
 //
 // Design goals:
@@ -175,7 +175,7 @@ export class HeadingFusion {
     }
 
     // This is the preferred Android/Chrome path. Unlike the previous Stage107
-    // implementation, Stage107.3 actually consumes the absolute quaternion.
+    // implementation, Stage107.4 actually consumes the absolute quaternion.
     try {
       if ('AbsoluteOrientationSensor' in window) {
         let s;
