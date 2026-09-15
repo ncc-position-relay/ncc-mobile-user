@@ -45,7 +45,7 @@ let viewerMode = '2d';
 let followUser = true;
 let sensorPermissionGranted = false;
 
-// Stage107.4 transport state. PDR may run at sensor rate, while Internet publishing
+// Stage107.5 transport state. PDR may run at sensor rate, while Internet publishing
 // is coalesced to the newest coordinate so public relay limits are never hit by
 // one request per step.
 let pdrPublishTimer = null;
@@ -58,6 +58,28 @@ function log(text) {
   const stamp = new Date().toLocaleTimeString();
   $('log').textContent = `[${stamp}] ${text}\n` + $('log').textContent.slice(0, 12000);
 }
+
+async function computeTopicFingerprint() {
+  const el = $('sessionFingerprint');
+  if (!el) return '';
+  const topic = cleanTopic($('sessionCode')?.value || '');
+  if (topic.length < 20) {
+    el.textContent = '—';
+    return '';
+  }
+  try {
+    const bytes = new TextEncoder().encode(topic);
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    const hex = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+    const short = hex.slice(0, 12);
+    el.textContent = short;
+    return short;
+  } catch {
+    el.textContent = 'unavailable';
+    return '';
+  }
+}
+
 function cleanTopic(value) { return String(value || '').trim().replace(/[^A-Za-z0-9_-]/g, ''); }
 function numberOrNull(value) { const n = Number(value); return Number.isFinite(n) ? n : null; }
 function numberOr(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
@@ -527,6 +549,7 @@ async function relayPost(message) {
   const topic = cleanTopic($('sessionCode').value);
   if (topic.length < 20) throw new Error('Session Code معتبر نیست یا خیلی کوتاه است.');
   sessionStorage.setItem(SESSION_KEY, topic);
+  void computeTopicFingerprint();
 
   const body = JSON.stringify(message);
   if (body.length > MAX_RELAY_MESSAGE_CHARS) {
@@ -546,7 +569,7 @@ async function relayPost(message) {
 
   try {
     /*
-     * Stage107.4 critical fix:
+     * Stage107.5 critical fix:
      * The official ntfy browser example is a plain POST with only a body.
      * Do NOT add X-NCC-* or application/json headers here. A custom header
      * forces a CORS preflight (OPTIONS) before the real POST, which is exactly
@@ -803,7 +826,7 @@ async function ensureQrDecoder() {
     }
   }
 
-  // IMPORTANT Stage107.4 fix: load jsQR EVEN WHEN BarcodeDetector exists.
+  // IMPORTANT Stage107.5 fix: load jsQR EVEN WHEN BarcodeDetector exists.
   // Stage107 returned early after constructing BarcodeDetector, so a browser
   // whose native detector could not decode a frame never received a real fallback.
   const jsQrOk = await loadJsQrFallback();
@@ -1186,8 +1209,24 @@ async function boot(){
   updatePdrUi();
   await initViewers();
   drawAccelChart();
-  log('NCC MOBILE STAGE107.4 READY · QR + PDR + SAFE-RATE ONLINE RELAY + SYSTEM AVATAR');
+  log('NCC MOBILE STAGE107.5 READY · QR + PDR + SAFE-RATE ONLINE RELAY + SYSTEM AVATAR');
 }
 boot().catch(e=>reportError('BOOT',e));
 
-const __cardinalTest = projectStepCardinalSelfTest(); if(!__cardinalTest.ok) console.error('PDR CARDINAL SELF TEST FAILED',__cardinalTest); else console.info('[NCC Stage107.4] PDR cardinal convention OK: 0=N 90=E 180=S 270=W');
+const __cardinalTest = projectStepCardinalSelfTest(); if(!__cardinalTest.ok) console.error('PDR CARDINAL SELF TEST FAILED',__cardinalTest); else console.info('[NCC Stage107.5] PDR cardinal convention OK: 0=N 90=E 180=S 270=W');
+
+// Stage107.5 topic identity diagnostic.
+(() => {
+  const bind = () => {
+    const input = $('sessionCode');
+    if (!input || input.dataset.sessionFingerprintBound === '1') return;
+    input.dataset.sessionFingerprintBound = '1';
+    input.addEventListener('input', () => void computeTopicFingerprint());
+    void computeTopicFingerprint();
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bind, { once: true });
+  } else {
+    bind();
+  }
+})();
