@@ -45,7 +45,7 @@ let viewerMode = '2d';
 let followUser = true;
 let sensorPermissionGranted = false;
 
-// Stage107.6 transport state. PDR may run at sensor rate, while Internet publishing
+// Stage107.6.1.1 transport state. PDR may run at sensor rate, while Internet publishing
 // is coalesced to the newest coordinate so public relay limits are never hit by
 // one request per step.
 let pdrPublishTimer = null;
@@ -573,7 +573,7 @@ async function relayPostUnlocked(message) {
 
   try {
     /*
-     * Stage107.6 critical fix:
+     * Stage107.6.1.1 critical fix:
      * The official ntfy browser example is a plain POST with only a body.
      * Do NOT add X-NCC-* or application/json headers here. A custom header
      * forces a CORS preflight (OPTIONS) before the real POST, which is exactly
@@ -842,7 +842,7 @@ async function ensureQrDecoder() {
     }
   }
 
-  // IMPORTANT Stage107.6 fix: load jsQR EVEN WHEN BarcodeDetector exists.
+  // IMPORTANT Stage107.6.1.1 fix: load jsQR EVEN WHEN BarcodeDetector exists.
   // Stage107 returned early after constructing BarcodeDetector, so a browser
   // whose native detector could not decode a frame never received a real fallback.
   const jsQrOk = await loadJsQrFallback();
@@ -1268,13 +1268,13 @@ async function boot(){
   updatePdrUi();
   await initViewers();
   drawAccelChart();
-  log('NCC MOBILE STAGE107.6 READY · QR + PDR + SAFE-RATE ONLINE RELAY + SYSTEM AVATAR');
+  log('NCC MOBILE STAGE107.6.1 READY · QR + PDR + SAFE-RATE ONLINE RELAY + SYSTEM AVATAR');
 }
 boot().catch(e=>reportError('BOOT',e));
 
-const __cardinalTest = projectStepCardinalSelfTest(); if(!__cardinalTest.ok) console.error('PDR CARDINAL SELF TEST FAILED',__cardinalTest); else console.info('[NCC Stage107.6] PDR cardinal convention OK: 0=N 90=E 180=S 270=W');
+const __cardinalTest = projectStepCardinalSelfTest(); if(!__cardinalTest.ok) console.error('PDR CARDINAL SELF TEST FAILED',__cardinalTest); else console.info('[NCC Stage107.6.1.1] PDR cardinal convention OK: 0=N 90=E 180=S 270=W');
 
-// Stage107.6 topic identity diagnostic.
+// Stage107.6.1.1 topic identity diagnostic.
 (() => {
   const bind = () => {
     const input = $('sessionCode');
