@@ -1,8 +1,8 @@
-import { NCC_CONFIG } from './config.js?v=1072';
-import { wgs84ToUtm39, utm39ToWgs84, normalizeHeading, projectStepCardinalSelfTest } from './utm.js?v=1072';
-import { HeadingFusion } from './headingFusion.js?v=1072';
-import { PdrEngine } from './pdr.js?v=1072';
-import { MobileMap2D } from './map2d.js?v=1072';
+import { NCC_CONFIG } from './config.js?v=1073';
+import { wgs84ToUtm39, utm39ToWgs84, normalizeHeading, projectStepCardinalSelfTest } from './utm.js?v=1073';
+import { HeadingFusion } from './headingFusion.js?v=1073';
+import { PdrEngine } from './pdr.js?v=1073';
+import { MobileMap2D } from './map2d.js?v=1073';
 
 const $ = id => document.getElementById(id);
 const PROFILE_KEY = 'ncc_mobile_profile_stage107';
@@ -44,6 +44,15 @@ let view3dInitPromise = null;
 let viewerMode = '2d';
 let followUser = true;
 let sensorPermissionGranted = false;
+
+// Stage107.3 transport state. PDR may run at sensor rate, while Internet publishing
+// is coalesced to the newest coordinate so public relay limits are never hit by
+// one request per step.
+let pdrPublishTimer = null;
+let relayBackoffUntil = 0;
+let relayNextAllowedAt = 0;
+let relayConsecutiveFailures = 0;
+let relayUiTimer = null;
 
 function log(text) {
   const stamp = new Date().toLocaleTimeString();
@@ -100,6 +109,8 @@ function saveProfile() {
     pdr: pdrConfigFromUi(),
     model_vertical_offset: numberOr($('modelVerticalOffset').value, 0),
     model_url: $('modelUrl').value.trim(),
+    auto_pdr_send: $('autoPdrSend')?.value !== 'off',
+    relay_interval_sec: Math.max(5.5, numberOr($('relayIntervalSec')?.value, (NCC_CONFIG.relay?.minSendIntervalMs || 6000) / 1000)),
   };
   localStorage.setItem(PROFILE_KEY, JSON.stringify(data));
   if (data.model_url) localStorage.setItem(MODEL_URL_KEY, data.model_url);
@@ -128,6 +139,8 @@ function loadProfile() {
   $('resetThreshold').value = pd.resetThresholdMps2;
   $('modelVerticalOffset').value = data.model_vertical_offset ?? NCC_CONFIG.model.verticalOffsetM ?? 0;
   $('modelUrl').value = data.model_url || localStorage.getItem(MODEL_URL_KEY) || NCC_CONFIG.model.defaultUrl;
+  if ($('autoPdrSend')) $('autoPdrSend').value = data.auto_pdr_send === false ? 'off' : 'on';
+  if ($('relayIntervalSec')) $('relayIntervalSec').value = Math.max(5.5, numberOr(data.relay_interval_sec, (NCC_CONFIG.relay?.minSendIntervalMs || 6000) / 1000));
 
   const storedSession = sessionStorage.getItem(SESSION_KEY) || '';
   if (storedSession) $('sessionCode').value = storedSession;
@@ -256,7 +269,7 @@ const pdr = new PdrEngine(NCC_CONFIG.pdr, {
   onReset: state => {
     handlePdrAnchorState(state);
     displayPdrState(state, false);
-    publishPdrState(state, 'pdr-reset').catch(e => reportError('PDR RESET SEND', e));
+    queuePdrPublish(state, 'pdr-reset', true);
   },
   onState: state => updatePdrUi(state),
 });
@@ -298,46 +311,110 @@ function displayPdrState(state, appendPath = true) {
   updatePdrUi(state);
 }
 
-function queuePdrPublish(state, source = 'pdr') {
+function autoPdrSendEnabled() {
+  return !$('autoPdrSend') || $('autoPdrSend').value !== 'off';
+}
+
+function relayIntervalMs() {
+  const uiMs = numberOr($('relayIntervalSec')?.value, (NCC_CONFIG.relay?.minSendIntervalMs || 6000) / 1000) * 1000;
+  return Math.max(5500, uiMs);
+}
+
+function setRelayBackoff(ms, reason = 'temporary') {
+  const max = Number(NCC_CONFIG.relay?.maxRateLimitBackoffMs || 240000);
+  const duration = Math.min(max, Math.max(0, Number(ms) || 0));
+  relayBackoffUntil = Math.max(relayBackoffUntil, Date.now() + duration);
+  if (duration > 0) log(`RELAY BACKOFF ${Math.ceil(duration / 1000)}s · ${reason}`);
+  updateRelayUi();
+}
+
+function clearRelayBackoff() {
+  relayBackoffUntil = 0;
+  relayConsecutiveFailures = 0;
+  updateRelayUi();
+}
+
+function updateRelayUi() {
+  const now = Date.now();
+  const remain = Math.max(0, relayBackoffUntil - now);
+  if ($('relayBackoff')) $('relayBackoff').textContent = remain > 0 ? `${Math.ceil(remain / 1000)} s` : '—';
+  if ($('relayQueueState')) {
+    let state = 'READY';
+    if (remain > 0) state = `BACKOFF ${Math.ceil(remain / 1000)}s`;
+    else if (pdrPublishRunning) state = 'SENDING';
+    else if (pdrPendingPublish) state = 'QUEUED-LATEST';
+    $('relayQueueState').textContent = state;
+  }
+}
+
+function schedulePdrFlush({ urgent = false } = {}) {
+  if (!pdrPendingPublish || pdrPublishRunning) { updateRelayUi(); return; }
+  clearTimeout(pdrPublishTimer);
+  const now = Date.now();
+  // Manual/urgent sends may skip the normal cadence only when the previous send
+  // is already outside the public relay safety interval. Backoff is never skipped.
+  const safeDue = urgent ? Math.max(relayBackoffUntil, relayNextAllowedAt) : Math.max(relayBackoffUntil, relayNextAllowedAt);
+  const delay = Math.max(0, safeDue - now);
+  pdrPublishTimer = setTimeout(() => { pdrPublishTimer = null; void flushPdrPublish(); }, delay);
+  updateRelayUi();
+}
+
+async function flushPdrPublish() {
+  if (pdrPublishRunning || !pdrPendingPublish) return;
+  const now = Date.now();
+  if (now < relayBackoffUntil || now < relayNextAllowedAt) {
+    schedulePdrFlush();
+    return;
+  }
+  const job = pdrPendingPublish;
+  pdrPendingPublish = null;
+  pdrPublishRunning = true;
+  updateRelayUi();
+  try {
+    await publishPdrState(job.snapshot, job.source);
+    relayNextAllowedAt = Date.now() + relayIntervalMs();
+    relayConsecutiveFailures = 0;
+  } catch (e) {
+    // Keep only the newest PDR coordinate. If new steps arrived while this request
+    // was in flight, they already replaced the pending slot and must win.
+    if (!pdrPendingPublish) pdrPendingPublish = job;
+    if (e?.code !== 'RELAY_BACKOFF') reportError('PDR SEND', e);
+    const fallback = Number(NCC_CONFIG.relay?.networkRetryMs || 8000);
+    if (relayBackoffUntil <= Date.now()) setRelayBackoff(fallback, 'network retry');
+  } finally {
+    pdrPublishRunning = false;
+    updateRelayUi();
+    if (pdrPendingPublish) schedulePdrFlush();
+    if (pdrPublishDropped) {
+      log(`PDR LIVE coalesced ${pdrPublishDropped} intermediate update(s); newest coordinate preserved.`);
+      pdrPublishDropped = 0;
+    }
+  }
+}
+
+function queuePdrPublish(state, source = 'pdr', urgent = false) {
+  if (!state || !Number.isFinite(state.easting) || !Number.isFinite(state.northing)) return Promise.resolve(false);
+  if (!autoPdrSendEnabled() && !urgent) return Promise.resolve(false);
   const snapshot = JSON.parse(JSON.stringify(state));
   if (pdrPendingPublish) pdrPublishDropped += 1;
   pdrPendingPublish = { snapshot, source };
-  if (pdrPublishRunning) return Promise.resolve();
-
-  pdrPublishRunning = true;
-  return (async () => {
-    try {
-      while (pdrPendingPublish) {
-        const job = pdrPendingPublish;
-        pdrPendingPublish = null;
-        try {
-          await publishPdrState(job.snapshot, job.source);
-        } catch (e) {
-          reportError('PDR SEND', e);
-        }
-      }
-    } finally {
-      pdrPublishRunning = false;
-      if (pdrPublishDropped && $('relayStatus')) {
-        log(`PDR LIVE coalesced ${pdrPublishDropped} stale intermediate update(s) to keep the newest coordinate real-time.`);
-        pdrPublishDropped = 0;
-      }
-    }
-  })();
+  schedulePdrFlush({ urgent });
+  return Promise.resolve(true);
 }
 
 function startPdrHeartbeat() {
   clearInterval(pdrHeartbeatTimer);
-  const ms = Math.max(1000, Number(NCC_CONFIG.pdr.pdrHeartbeatMs || 2000));
-  pdrHeartbeatTimer = setInterval(() => { if (pdr.active) queuePdrPublish(pdr.snapshot(), 'pdr'); }, ms);
+  const ms = Math.max(10000, Number(NCC_CONFIG.relay?.idleHeartbeatMs || NCC_CONFIG.pdr.pdrHeartbeatMs || 30000));
+  pdrHeartbeatTimer = setInterval(() => {
+    if (pdr.active && autoPdrSendEnabled()) queuePdrPublish(pdr.snapshot(), 'pdr-heartbeat');
+  }, ms);
 }
 function stopPdrHeartbeat() { clearInterval(pdrHeartbeatTimer); pdrHeartbeatTimer = null; }
 
 async function handlePdrStep(state) {
   displayPdrState(state, true);
-  // Every accepted step refreshes the latest-wins relay slot. If a network POST is
-  // still in flight, obsolete intermediate coordinates are coalesced so Cesium/XR
-  // receives the newest PDR position instead of a growing delayed queue.
+  // Local PDR remains full-rate; Internet transport publishes only the newest
+  // coordinate at the configured safe interval.
   queuePdrPublish(state, 'pdr');
 }
 
@@ -364,6 +441,28 @@ async function publishPdrState(state, source = 'pdr') {
     pdr_gyro_rate_dps: headingFusion.snapshot().gyroRateDps,
     pdr_magnetic_field_ut: headingFusion.snapshot().magneticFieldUt,
   });
+}
+
+async function sendCurrentPositionNow() {
+  const state = pdr.snapshot();
+  if (state?.anchor && Number.isFinite(state.easting) && Number.isFinite(state.northing)) {
+    queuePdrPublish(state, 'pdr-manual', true);
+    $('relayStatus').textContent = 'PDR: جدیدترین مختصات برای ارسال به سامانه در صف قرار گرفت.';
+    $('relayStatus').className = 'ok';
+    log(`PDR MANUAL QUEUE E=${state.easting.toFixed(3)} N=${state.northing.toFixed(3)} step=${state.stepCount}`);
+    return;
+  }
+  if (!lastPosition || !Number.isFinite(lastPosition.latitude) || !Number.isFinite(lastPosition.longitude)) {
+    throw new Error('هنوز موقعیت معتبری برای ارسال وجود ندارد. QR/GPS/PDR را فعال کنید.');
+  }
+  await publish({
+    latitude: lastPosition.latitude,
+    longitude: lastPosition.longitude,
+    display_altitude: lastPosition.h,
+    heading: lastPosition.headingDeg,
+    utm_easting: lastPosition.easting,
+    utm_northing: lastPosition.northing,
+  }, `${lastPosition.source || 'manual'}-manual`);
 }
 
 function buildMessage(coords, source = 'gps', extra = {}) {
@@ -408,20 +507,81 @@ function buildMessage(coords, source = 'gps', extra = {}) {
   };
 }
 
+async function relayFetchWithTimeout(url, options, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try { return await fetch(url, { ...options, signal: controller.signal, cache: 'no-store' }); }
+  finally { clearTimeout(timer); }
+}
+
+function retryAfterMs(response) {
+  const raw = response?.headers?.get?.('retry-after');
+  if (!raw) return null;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(raw);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
+}
+
 async function relayPost(message) {
   const topic = cleanTopic($('sessionCode').value);
   if (topic.length < 20) throw new Error('Session Code معتبر نیست یا خیلی کوتاه است.');
   sessionStorage.setItem(SESSION_KEY, topic);
   const body = JSON.stringify(message);
   if (body.length > MAX_RELAY_MESSAGE_CHARS) throw new Error(`پیام برای Relay بزرگ است (${body.length} chars).`);
-  const response = await fetch(`${NCC_CONFIG.relayBase}/${encodeURIComponent(topic)}`, {
-    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body, cache: 'no-store',
-  });
-  if (!response.ok) throw new Error(`Relay HTTP ${response.status}`);
+
+  if (Date.now() < relayBackoffUntil) {
+    const error = new Error(`Relay در Backoff است؛ ${Math.ceil((relayBackoffUntil - Date.now()) / 1000)} ثانیه باقی مانده.`);
+    error.code = 'RELAY_BACKOFF';
+    throw error;
+  }
+
+  const topicUrl = `${NCC_CONFIG.relayBase}/${encodeURIComponent(topic)}`;
+  let response;
+  try {
+    response = await relayFetchWithTimeout(topicUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8', 'X-NCC-Stage': '107.3' },
+      body,
+    });
+    // Some gateways/proxies reject topic-path POSTs. Official ntfy also accepts
+    // JSON publishing on the root endpoint, so transparently fall back there.
+    if (response.status === 404 || response.status === 405) {
+      response = await relayFetchWithTimeout(`${NCC_CONFIG.relayBase}/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json;charset=UTF-8', 'X-NCC-Stage': '107.3' },
+        body: JSON.stringify({ topic, message: body }),
+      });
+    }
+  } catch (error) {
+    relayConsecutiveFailures += 1;
+    const base = Number(NCC_CONFIG.relay?.networkRetryMs || 8000);
+    setRelayBackoff(Math.min(base * Math.max(1, relayConsecutiveFailures), 60000), 'fetch/network');
+    throw new Error(`ارتباط با Relay برقرار نشد: ${error?.name === 'AbortError' ? 'timeout' : (error?.message || error)}`);
+  }
+
+  if (response.status === 429) {
+    relayConsecutiveFailures += 1;
+    const requested = retryAfterMs(response);
+    const backoff = requested ?? Number(NCC_CONFIG.relay?.rateLimitBackoffMs || 60000);
+    setRelayBackoff(backoff, 'HTTP 429 rate limit');
+    const error = new Error(`Relay HTTP 429؛ ارسال خودکار تا پایان Backoff متوقف شد.`);
+    error.code = 'RELAY_429';
+    throw error;
+  }
+  if (!response.ok) {
+    relayConsecutiveFailures += 1;
+    setRelayBackoff(Number(NCC_CONFIG.relay?.networkRetryMs || 8000), `HTTP ${response.status}`);
+    throw new Error(`Relay HTTP ${response.status}`);
+  }
+
+  clearRelayBackoff();
+  relayNextAllowedAt = Math.max(relayNextAllowedAt, Date.now() + relayIntervalMs());
   sentCount += 1;
   $('sentCount').textContent = sentCount;
   $('lastSend').textContent = new Date().toLocaleTimeString();
   $('relayStatus').className = 'ok';
+  updateRelayUi();
   return body.length;
 }
 
@@ -562,7 +722,7 @@ async function ensureQrDecoder() {
     }
   }
 
-  // IMPORTANT Stage107.2 fix: load jsQR EVEN WHEN BarcodeDetector exists.
+  // IMPORTANT Stage107.3 fix: load jsQR EVEN WHEN BarcodeDetector exists.
   // Stage107 returned early after constructing BarcodeDetector, so a browser
   // whose native detector could not decode a frame never received a real fallback.
   const jsQrOk = await loadJsQrFallback();
@@ -829,7 +989,7 @@ async function ensure3D(){
   if(view3dInitPromise) return view3dInitPromise;
   view3dInitPromise=(async()=>{
     $('modelStatus').textContent='در حال بارگذاری موتور Three.js…';
-    const { MobileBuilding3D } = await import('./view3d.js?v=1072');
+    const { MobileBuilding3D } = await import('./view3d.js?v=1073');
     const instance=new MobileBuilding3D($('view3d'),{
       ...NCC_CONFIG.model, transform:NCC_CONFIG.modelRuntimeTransform, qrPoints:NCC_CONFIG.qrPoints,
       verticalOffsetM:numberOr($('modelVerticalOffset').value,0),
@@ -891,6 +1051,11 @@ $('takePhoto').onclick=()=>$('photoInput').click();
 $('photoInput').onchange=async e=>{try{const f=e.target.files?.[0];if(!f)return;userPhotoDataUrl=await compressFacePhoto(f);if(!userPhotoDataUrl||userPhotoDataUrl.length>3000)throw new Error('فشرده‌سازی عکس کافی نبود.');localStorage.setItem(PHOTO_KEY,userPhotoDataUrl);updatePhotoPreview();log(`PHOTO READY chars=${userPhotoDataUrl.length}`);}catch(err){reportError('PHOTO',err);}finally{e.target.value='';}};
 $('sendPhoto').onclick=()=>publishPhoto().catch(e=>reportError('PHOTO SEND',e));
 $('clearPhoto').onclick=()=>{userPhotoDataUrl=null;localStorage.removeItem(PHOTO_KEY);updatePhotoPreview();log('LOCAL PHOTO CLEARED');};
+$('sendCurrentPosition').onclick=()=>sendCurrentPositionNow().catch(e=>reportError('MANUAL SEND',e));
+$('retryRelay').onclick=()=>{clearRelayBackoff();relayNextAllowedAt=0;sendCurrentPositionNow().catch(e=>reportError('RELAY RETRY',e));};
+$('clearRelayBackoff').onclick=()=>{clearRelayBackoff();relayNextAllowedAt=0;$('relayStatus').textContent='Relay Backoff پاک شد؛ ارسال بعدی مجاز است.';$('relayStatus').className='ok';};
+$('autoPdrSend').onchange=()=>{saveProfile();updateRelayUi();if(autoPdrSendEnabled()&&pdr.active)queuePdrPublish(pdr.snapshot(),'pdr-enable',true);};
+$('relayIntervalSec').onchange=()=>{const v=Math.max(5.5,numberOr($('relayIntervalSec').value,6));$('relayIntervalSec').value=v;saveProfile();relayNextAllowedAt=Math.min(relayNextAllowedAt,Date.now()+relayIntervalMs());updateRelayUi();};
 $('enableSensors').onclick=()=>requestSensorPermission().then(()=>log('SENSORS ENABLED')).catch(e=>reportError('SENSOR',e));
 $('calibrateHeading').onclick=()=>{try{calibrateHeadingFromUi();}catch(e){reportError('HEADING CAL',e);}};
 $('clearHeadingCalibration').onclick=()=>{headingFusion.clearCalibration();updatePdrUi();$('fusionStatus').textContent='WAIT ABSOLUTE';$('fusionStatus').className='ltr';log('HEADING OVERRIDE/AUTO INIT CLEARED');};
@@ -904,8 +1069,8 @@ $('applyQr').onclick=()=>{try{applyQrAsAnchor();}catch(e){reportError('QR APPLY'
 $('cancelQr').onclick=cancelQr;
 $('scanQrImage').onclick=()=>$('qrImageInput').click();
 $('qrImageInput').onchange=e=>{const f=e.target.files?.[0];if(f)scanQrImage(f).catch(err=>reportError('QR IMAGE',err));e.target.value='';};
-$('startPdr').onclick=async()=>{try{if(!sensorPermissionGranted)await requestSensorPermission();if(!headingFusion.calibrated)throw new Error('Heading مطلق هنوز آماده نیست. ابتدا «فعال‌کردن سنسورها» را بزنید و منتظر CAL بمانید.');pdr.setConfig(pdrConfigFromUi());pdr.setHeading(currentHeading());pdr.start();startPdrHeartbeat();updatePdrUi();setSource('pdr');queuePdrPublish(pdr.snapshot(),'pdr');log('PDR STARTED');}catch(e){reportError('PDR START',e);}};
-$('stopPdr').onclick=()=>{pdr.stop();stopPdrHeartbeat();updatePdrUi();queuePdrPublish(pdr.snapshot(),'pdr');log('PDR STOPPED');};
+$('startPdr').onclick=async()=>{try{if(!sensorPermissionGranted)await requestSensorPermission();if(!headingFusion.calibrated)throw new Error('Heading مطلق هنوز آماده نیست. ابتدا «فعال‌کردن سنسورها» را بزنید و منتظر CAL بمانید.');pdr.setConfig(pdrConfigFromUi());pdr.setHeading(currentHeading());pdr.start();startPdrHeartbeat();updatePdrUi();setSource('pdr');if(autoPdrSendEnabled())queuePdrPublish(pdr.snapshot(),'pdr-start',true);log(`PDR STARTED · online=${autoPdrSendEnabled()?'ON':'OFF'} · interval=${(relayIntervalMs()/1000).toFixed(1)}s`);}catch(e){reportError('PDR START',e);}};
+$('stopPdr').onclick=()=>{pdr.stop();stopPdrHeartbeat();updatePdrUi();if(autoPdrSendEnabled())queuePdrPublish(pdr.snapshot(),'pdr-stop',true);log('PDR STOPPED');};
 $('resetPdr').onclick=()=>pdr.resetToAnchor();
 for(const id of ['stepLength','peakThreshold','maxPeak','minStepInterval','resetThreshold']) $(id).onchange=()=>pdr.setConfig(pdrConfigFromUi());
 $('manualHeading').onchange=()=>{
@@ -923,22 +1088,24 @@ $('tab2d').onclick=()=>setViewerMode('2d');$('tab3d').onclick=()=>setViewerMode(
 $('toggleFollow').onclick=()=>{followUser=!followUser;map2d?.setFollow(followUser);view3d?.setFollow(followUser);$('toggleFollow').textContent=`Follow: ${followUser?'ON':'OFF'}`;};
 $('clearTrack').onclick=()=>{map2d?.clearPath();view3d?.clearPath();log('TRACK CLEARED');};
 $('fit3d').onclick=async()=>{try{const v=await ensure3D();v.fitModel();}catch(e){reportError('3D FIT',e);}};
-window.addEventListener('online',()=>{$('network').textContent='Network: online';$('network').className='pill ok';});
+window.addEventListener('online',()=>{$('network').textContent='Network: online';$('network').className='pill ok';clearRelayBackoff();if(pdrPendingPublish)schedulePdrFlush({urgent:true});});
 window.addEventListener('offline',()=>{$('network').textContent='Network: offline';$('network').className='pill bad';});
-window.addEventListener('pagehide',()=>{stopQrCamera();stopGpsLive();});
+window.addEventListener('pagehide',()=>{stopQrCamera();stopGpsLive();clearInterval(relayUiTimer);clearTimeout(pdrPublishTimer);});
 
 async function boot(){
   $('secure').textContent=`Secure Context: ${isSecureContext?'YES':'NO'}`;$('secure').className=`pill ${isSecureContext?'ok':'bad'}`;
   $('network').textContent=`Network: ${navigator.onLine?'online':'offline'}`;$('network').className=`pill ${navigator.onLine?'ok':'bad'}`;
   $('motionPermission').textContent='Motion: tap Enable';$('orientationPermission').textContent='Heading: tap Enable';
   loadProfile();
+  updateRelayUi();
+  relayUiTimer = setInterval(updateRelayUi, 1000);
   pdr.setConfig(pdrConfigFromUi());
   lastRawHeading=normalizeHeading(numberOr($('manualHeading').value,90));
   updatePdrUi();
   await initViewers();
   drawAccelChart();
-  log('NCC MOBILE STAGE107.2 READY · QR + PDR + 2D + 3D + LIVE RELAY');
+  log('NCC MOBILE STAGE107.3 READY · QR + PDR + SAFE-RATE ONLINE RELAY + SYSTEM AVATAR');
 }
 boot().catch(e=>reportError('BOOT',e));
 
-const __cardinalTest = projectStepCardinalSelfTest(); if(!__cardinalTest.ok) console.error('PDR CARDINAL SELF TEST FAILED',__cardinalTest); else console.info('[NCC Stage107.2] PDR cardinal convention OK: 0=N 90=E 180=S 270=W');
+const __cardinalTest = projectStepCardinalSelfTest(); if(!__cardinalTest.ok) console.error('PDR CARDINAL SELF TEST FAILED',__cardinalTest); else console.info('[NCC Stage107.3] PDR cardinal convention OK: 0=N 90=E 180=S 270=W');

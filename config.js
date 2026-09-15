@@ -1,6 +1,14 @@
 export const NCC_CONFIG = Object.freeze({
-  stage: '107.2',
+  stage: '107.3',
   relayBase: 'https://ntfy.sh',
+  relay: {
+    // Public ntfy request bucket: coalesce high-rate PDR steps and publish safely.
+    minSendIntervalMs: 6000,
+    idleHeartbeatMs: 30000,
+    networkRetryMs: 8000,
+    rateLimitBackoffMs: 60000,
+    maxRateLimitBackoffMs: 240000,
+  },
   map: {
     center: [51.33318, 35.69739],
     zoom: 20,
@@ -25,7 +33,7 @@ export const NCC_CONFIG = Object.freeze({
     baselineAlpha: 0.025,
     signalAlpha: 0.35,
     headingAlpha: 1.0,
-    pdrHeartbeatMs: 2000,
+    pdrHeartbeatMs: 30000,
     absoluteSmoothingAlpha: 0.18,
     absoluteCorrectionGain: 0.35,
     movingCorrectionGain: 0.22,
@@ -42,7 +50,7 @@ export const NCC_CONFIG = Object.freeze({
     initialAbsoluteSamples: 6,
     initialMaxSamples: 16,
     initialSpreadDeg: 28,
-    sendMinIntervalMs: 350,
+    sendMinIntervalMs: 6000,
     chartSamples: 180,
   },
   // These are the SAME Stage-33 normalized runtime X/Z <-> UTM constants

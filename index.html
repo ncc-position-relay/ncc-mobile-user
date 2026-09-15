@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#071722">
   <meta name="color-scheme" content="dark">
-  <title>NCC XR — Mobile Indoor PDR · Stage107.2</title>
-  <link rel="stylesheet" href="./app.css?v=1072">
+  <title>NCC XR — Mobile Indoor PDR · Stage107.3</title>
+  <link rel="stylesheet" href="./app.css?v=1073">
   <script type="importmap">
   {
     "imports": {
@@ -19,7 +19,7 @@
 <body>
 <main>
   <section class="card">
-    <h1>NCC XR — تعیین موقعیت موبایل · Stage107.2</h1>
+    <h1>NCC XR — تعیین موقعیت موبایل · Stage107.3</h1>
     <div class="muted">QR Anchor + PDR ساده + نقشه 2D + مدل GLB سه‌بعدی + ارسال زنده به Cesium/XR</div>
     <div class="status">
       <span id="secure" class="pill">Secure Context: …</span>
@@ -56,12 +56,12 @@
       <label>نام نمایشی<input id="label" maxlength="100"></label>
       <label>جنسیت<select id="gender"><option value="unknown">نامشخص</option><option value="male">آقا</option><option value="female">خانم</option></select></label>
       <label>Role<select id="role"><option value="visitor">Visitor</option><option value="staff">Staff</option><option value="responder">Responder</option><option value="commander">Commander</option></select></label>
-      <label>Avatar ID اختیاری<input id="avatarId" placeholder="اگر خالی باشد عکس/آواتار عمومی"></label>
+      <label>Avatar موجود در سامانه — کد/نام GLB<input id="avatarId" list="avatarExamples" placeholder="مثال USER_001 یا avatar_male_01 یا my_avatar.glb"><datalist id="avatarExamples"><option value="avatar_male_01"><option value="avatar_female_01"><option value="avatar_generic_01"></datalist></label>
       <label>Floor<input id="floorId" placeholder="مثال F01"></label>
       <label>قد (cm)<input id="heightCm" type="number" value="175"></label>
       <label>وزن (kg)<input id="weightKg" type="number" value="75"></label>
     </div>
-    <div class="avatar" style="margin-top:9px"><div id="avatarIcon" class="avatarIcon">👤</div><img id="photoPreview" class="photoPreview" hidden alt="photo"><div><b id="avatarPreview">Avatar: auto</b><div class="muted">عکس کوچک فقط برای نمایش Avatar ارسال می‌شود.</div></div></div>
+    <div class="avatar" style="margin-top:9px"><div id="avatarIcon" class="avatarIcon">👤</div><img id="photoPreview" class="photoPreview" hidden alt="photo"><div><b id="avatarPreview">Avatar: auto</b><div class="muted">اگر کد/نام GLB معتبر وارد شود، آواتار موجود سامانه اولویت دارد؛ عکس فقط fallback است.</div></div></div>
     <input id="photoInput" class="hiddenInput" type="file" accept="image/*" capture="user">
     <div class="photoActions"><button id="takePhoto">📷 عکس کاربر</button><button id="sendPhoto" class="success" disabled>ارسال عکس</button><button id="clearPhoto" class="danger" disabled>حذف عکس</button></div>
     <button id="saveProfile" style="margin-top:8px">ذخیره مشخصات روی گوشی</button>
@@ -74,7 +74,7 @@
       <label>Heading دستی اضطراری (deg)<input id="manualHeading" type="number" value="90" step="0.1"></label>
       <label>هشدار دقت GPS (m)<input id="accuracyWarn" type="number" value="50"></label>
     </div>
-    <div class="notice" style="margin-top:8px">گوشی را در راستای حرکت نگه دارید. Stage107.2 جهت اولیه را خودکار از Absolute Orientation مرجع زمین می‌گیرد. ژیروسکوپ فقط پیش‌بینی کوتاه‌مدت است و مرجع مطلق دائماً Drift را حذف می‌کند. نبودن Raw Magnetometer API به‌تنهایی خطا محسوب نمی‌شود.</div>
+    <div class="notice" style="margin-top:8px">گوشی را در راستای حرکت نگه دارید. Stage107.3 جهت اولیه را خودکار از Absolute Orientation مرجع زمین می‌گیرد. ژیروسکوپ فقط پیش‌بینی کوتاه‌مدت است و مرجع مطلق دائماً Drift را حذف می‌کند. نبودن Raw Magnetometer API به‌تنهایی خطا محسوب نمی‌شود.</div>
     <div class="toolbar" style="margin-top:8px"><button id="calibrateHeading" class="success">اعمال Override جهت (اختیاری)</button><button id="clearHeadingCalibration">پاک‌کردن کالیبراسیون جهت</button></div>
     <div class="row"><span>Fusion</span><span id="fusionStatus" class="ltr">—</span></div>
     <div class="row"><span>Gyro yaw rate</span><span id="gyroRate" class="ltr">—</span></div>
@@ -126,7 +126,7 @@
 
   <section class="card">
     <h2>۵) مدل سه‌بعدی زمین‌مرجع روی موبایل</h2>
-    <div class="notice">Stage107.2 از همان تبدیل UTM↔Model_X/Z موجود در Backend استفاده می‌کند. فایل GLB را با نام <code>assets/ncc_building.glb</code> در GitHub Pages قرار دهید یا از گوشی انتخاب کنید.</div>
+    <div class="notice">Stage107.3 از همان تبدیل UTM↔Model_X/Z موجود در Backend استفاده می‌کند. فایل GLB را با نام <code>assets/ncc_building.glb</code> در GitHub Pages قرار دهید یا از گوشی انتخاب کنید.</div>
     <div class="model-tools" style="margin-top:8px"><input id="modelUrl" value="./assets/ncc_building.glb" class="ltr"><button id="loadModelUrl">بارگذاری URL</button></div>
     <input id="modelFile" class="hiddenInput" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json">
     <button id="pickModelFile" style="margin-top:8px">انتخاب GLB از حافظه گوشی</button>
@@ -134,11 +134,20 @@
   </section>
 
   <section class="card">
-    <h2>۶) وضعیت ارسال آنلاین</h2>
+    <h2>۶) وضعیت ارسال آنلاین به سامانه</h2>
+    <div class="notice">با شروع PDR، ارسال آنلاین به‌صورت پیش‌فرض فعال می‌شود. موقعیت محلی در هر گام محاسبه می‌شود، اما برای جلوگیری از خطای 429 سرویس عمومی Relay فقط جدیدترین مختصات با فاصله امن ارسال می‌شود.</div>
+    <div class="grid3" style="margin-top:8px">
+      <label>ارسال خودکار PDR<select id="autoPdrSend"><option value="on" selected>فعال</option><option value="off">غیرفعال</option></select></label>
+      <label>فاصله ارسال آنلاین (ثانیه)<input id="relayIntervalSec" type="number" min="5.5" max="60" step="0.5" value="6"></label>
+      <label>وضعیت صف<span id="relayQueueState" class="input-like ltr">READY</span></label>
+    </div>
+    <div class="toolbar3" style="margin-top:8px"><button id="sendCurrentPosition" class="success">ارسال همین موقعیت الآن</button><button id="retryRelay">تلاش مجدد Relay</button><button id="clearRelayBackoff">پاک‌کردن Backoff</button></div>
+    <div class="row"><span>Transport</span><span id="relayTransport" class="ltr">ntfy · safe-rate</span></div>
+    <div class="row"><span>Backoff</span><span id="relayBackoff" class="ltr">—</span></div>
     <div class="kpi"><div><b id="sentCount">0</b><small>موفق</small></div><div><b id="errorCount">0</b><small>خطا</small></div><div><b id="sequence">0</b><small>Sequence</small></div><div><b id="lastSend">—</b><small>آخرین ارسال</small></div></div>
     <p id="relayStatus">Relay: آماده</p><div id="log"></div>
   </section>
 </main>
-<script type="module" src="./app.js?v=1072"></script>
+<script type="module" src="./app.js?v=1073"></script>
 </body>
 </html>
