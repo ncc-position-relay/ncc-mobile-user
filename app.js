@@ -1,8 +1,8 @@
-import { NCC_CONFIG } from './config.js';
-import { wgs84ToUtm39, utm39ToWgs84, normalizeHeading, projectStepCardinalSelfTest } from './utm.js';
-import { HeadingFusion } from './headingFusion.js';
-import { PdrEngine } from './pdr.js';
-import { MobileMap2D } from './map2d.js';
+import { NCC_CONFIG } from './config.js?v=1071';
+import { wgs84ToUtm39, utm39ToWgs84, normalizeHeading, projectStepCardinalSelfTest } from './utm.js?v=1071';
+import { HeadingFusion } from './headingFusion.js?v=1071';
+import { PdrEngine } from './pdr.js?v=1071';
+import { MobileMap2D } from './map2d.js?v=1071';
 
 const $ = id => document.getElementById(id);
 const PROFILE_KEY = 'ncc_mobile_profile_stage107';
@@ -220,6 +220,7 @@ const headingFusion = new HeadingFusion(NCC_CONFIG.pdr, {
     if (!Number.isFinite(heading)) return;
     lastRawHeading = heading;
     pdr?.setHeading?.(heading);
+    updatePdrUi();
     $('deviceHeading').textContent = `${heading.toFixed(1)}°`;
     $('fusionStatus').textContent = `${d.calibrated ? 'CAL' : 'UNCAL'} · ${d.sensorMode} · mag=${d.magneticQuality}`;
     $('gyroRate').textContent = `${Number(d.gyroRateDps || 0).toFixed(1)} °/s`;
@@ -509,8 +510,16 @@ async function requestSensorPermission() {
   $('motionPermission').textContent=`Motion: ${motionOk?'YES':'NO'}`;$('motionPermission').className=`pill ${motionOk?'ok':'bad'}`;
   $('orientationPermission').textContent=`Heading: ${orientationOk?'YES':'NO'}`;$('orientationPermission').className=`pill ${orientationOk?'ok':'bad'}`;
   bindSensorEvents();
+  $('fusionStatus').textContent='WAIT MAG/ABS HEADING';
   try { await headingFusion.startOptionalGenericSensors(); } catch (e) { log(`GENERIC SENSOR: ${e.message}`); }
   if(!sensorPermissionGranted) throw new Error('مجوز Motion/Orientation کامل صادر نشد.');
+  setTimeout(() => {
+    if (!Number.isFinite(headingFusion.heading())) {
+      $('fusionStatus').textContent='NO ABS HEADING · گوشی را به شکل 8 حرکت دهید و سنسورها را دوباره فعال کنید';
+      $('fusionStatus').className='bad';
+      log('HEADING: no absolute/magnetic heading sample received after sensor enable');
+    }
+  }, 2500);
   return true;
 }
 function bindSensorEvents() {
@@ -555,7 +564,7 @@ async function ensure3D(){
   if(view3dInitPromise) return view3dInitPromise;
   view3dInitPromise=(async()=>{
     $('modelStatus').textContent='در حال بارگذاری موتور Three.js…';
-    const { MobileBuilding3D } = await import('./view3d.js');
+    const { MobileBuilding3D } = await import('./view3d.js?v=1071');
     const instance=new MobileBuilding3D($('view3d'),{
       ...NCC_CONFIG.model, transform:NCC_CONFIG.modelRuntimeTransform, qrPoints:NCC_CONFIG.qrPoints,
       verticalOffsetM:numberOr($('modelVerticalOffset').value,0),

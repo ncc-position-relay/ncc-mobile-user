@@ -159,8 +159,19 @@ export class HeadingFusion {
     const raw = normalizeHeading(rawHeading);
     this.absoluteRaw = raw;
     if (!this.calibrated) {
+      // Stage107.1: the first absolute/magnetic heading is the initial PDR azimuth.
+      // Android's absolute DeviceOrientation is already platform-fused from
+      // magnetometer + gyroscope + accelerometer; our filter then uses gyro for
+      // short-term propagation and very slow magnetic correction to suppress jitter.
+      this.knownBaseline = raw;
+      this.absoluteBaseline = raw;
+      this.absoluteCalibrated = raw;
+      this.fused = raw;
+      this.calibrated = true;
       this.cb.onAbsolute?.(raw, source);
-      return raw;
+      this.#emit(timestampMs, 'magnetic-auto-init');
+      this.cb.onDiagnostic?.(`magnetic-auto-init:${source}:${raw.toFixed(1)}deg`);
+      return this.fused;
     }
     // Calibration may be pressed before the first absolute-orientation sample.
     // Capture that first sample as the magnetic baseline instead of leaving the
