@@ -1,8 +1,8 @@
-import { NCC_CONFIG } from './config.js?v=1076';
-import { wgs84ToUtm39, utm39ToWgs84, normalizeHeading, projectStepCardinalSelfTest } from './utm.js?v=1076';
-import { HeadingFusion } from './headingFusion.js?v=1076';
-import { PdrEngine } from './pdr.js?v=1076';
-import { MobileMap2D } from './map2d.js?v=1076';
+import { NCC_CONFIG } from './config.js?v=1077';
+import { wgs84ToUtm39, utm39ToWgs84, normalizeHeading, projectStepCardinalSelfTest } from './utm.js?v=1077';
+import { HeadingFusion } from './headingFusion.js?v=1077';
+import { PdrEngine } from './pdr.js?v=1077';
+import { MobileMap2D } from './map2d.js?v=1077';
 
 const $ = id => document.getElementById(id);
 const PROFILE_KEY = 'ncc_mobile_profile_stage107';
@@ -45,10 +45,11 @@ let viewerMode = '2d';
 let followUser = true;
 let sensorPermissionGranted = false;
 
-// Stage107.6.1.1 transport state. PDR may run at sensor rate, while Internet publishing
+// Stage107.7.1 transport state. PDR may run at sensor rate, while Internet publishing
 // is coalesced to the newest coordinate so public relay limits are never hit by
 // one request per step.
 let pdrPublishTimer = null;
+let pdrFirstMotionSent = false;
 let relaySendChain = Promise.resolve();
 let gpsLivePublishTimer = null;
 let gpsPendingLivePosition = null;
@@ -136,7 +137,7 @@ function saveProfile() {
     model_vertical_offset: numberOr($('modelVerticalOffset').value, 0),
     model_url: $('modelUrl').value.trim(),
     auto_pdr_send: $('autoPdrSend')?.value !== 'off',
-    relay_interval_sec: Math.max(5.5, numberOr($('relayIntervalSec')?.value, (NCC_CONFIG.relay?.minSendIntervalMs || 6000) / 1000)),
+    relay_interval_sec: Math.max(5.0, numberOr($('relayIntervalSec')?.value, (NCC_CONFIG.relay?.minSendIntervalMs || 5000) / 1000)),
   };
   localStorage.setItem(PROFILE_KEY, JSON.stringify(data));
   if (data.model_url) localStorage.setItem(MODEL_URL_KEY, data.model_url);
@@ -166,7 +167,7 @@ function loadProfile() {
   $('modelVerticalOffset').value = data.model_vertical_offset ?? NCC_CONFIG.model.verticalOffsetM ?? 0;
   $('modelUrl').value = data.model_url || localStorage.getItem(MODEL_URL_KEY) || NCC_CONFIG.model.defaultUrl;
   if ($('autoPdrSend')) $('autoPdrSend').value = data.auto_pdr_send === false ? 'off' : 'on';
-  if ($('relayIntervalSec')) $('relayIntervalSec').value = Math.max(5.5, numberOr(data.relay_interval_sec, (NCC_CONFIG.relay?.minSendIntervalMs || 6000) / 1000));
+  if ($('relayIntervalSec')) $('relayIntervalSec').value = Math.max(5.0, numberOr(data.relay_interval_sec, (NCC_CONFIG.relay?.minSendIntervalMs || 5000) / 1000));
 
   const storedSession = sessionStorage.getItem(SESSION_KEY) || '';
   if (storedSession) $('sessionCode').value = storedSession;
@@ -342,8 +343,8 @@ function autoPdrSendEnabled() {
 }
 
 function relayIntervalMs() {
-  const uiMs = numberOr($('relayIntervalSec')?.value, (NCC_CONFIG.relay?.minSendIntervalMs || 6000) / 1000) * 1000;
-  return Math.max(5500, uiMs);
+  const uiMs = numberOr($('relayIntervalSec')?.value, (NCC_CONFIG.relay?.minSendIntervalMs || 5000) / 1000) * 1000;
+  return Math.max(5000, uiMs);
 }
 
 function setRelayBackoff(ms, reason = 'temporary') {
@@ -439,8 +440,20 @@ function stopPdrHeartbeat() { clearInterval(pdrHeartbeatTimer); pdrHeartbeatTime
 
 async function handlePdrStep(state) {
   displayPdrState(state, true);
-  // Local PDR remains full-rate; Internet transport publishes only the newest
-  // coordinate at the configured safe interval.
+
+  // Stage107.7: make motion feel immediate. The PDR-start anchor is sent first;
+  // the first REAL walking step gets one additional burst token immediately.
+  // Afterwards we return to the public-relay safe correction cadence.
+  if (!pdrFirstMotionSent && Number(state?.stepCount || 0) >= 1 && Date.now() >= relayBackoffUntil) {
+    pdrFirstMotionSent = true;
+    relayNextAllowedAt = Math.min(relayNextAllowedAt || Date.now(), Date.now());
+    queuePdrPublish(state, 'pdr-first-step', true);
+    log(`PDR FIRST MOTION · immediate network kick · step=${state.stepCount}`);
+    return;
+  }
+
+  // Local PDR remains full-rate; Internet transport sends only the newest
+  // authoritative correction coordinate at the configured safe interval.
   queuePdrPublish(state, 'pdr');
 }
 
@@ -573,7 +586,7 @@ async function relayPostUnlocked(message) {
 
   try {
     /*
-     * Stage107.6.1.1 critical fix:
+     * Stage107.7.1 critical fix:
      * The official ntfy browser example is a plain POST with only a body.
      * Do NOT add X-NCC-* or application/json headers here. A custom header
      * forces a CORS preflight (OPTIONS) before the real POST, which is exactly
@@ -639,6 +652,11 @@ async function relayPostUnlocked(message) {
 
   if (response.status === 429) {
     relayConsecutiveFailures += 1;
+    if ($('relayIntervalSec') && numberOr($('relayIntervalSec').value, 5) < 5.5) {
+      $('relayIntervalSec').value = '5.5';
+      saveProfile();
+      log('RELAY AUTO SAFE-RATE · interval raised to 5.5s after HTTP 429');
+    }
     const requested = retryAfterMs(response);
     const backoff =
       requested ?? Number(NCC_CONFIG.relay?.rateLimitBackoffMs || 60000);
@@ -842,7 +860,7 @@ async function ensureQrDecoder() {
     }
   }
 
-  // IMPORTANT Stage107.6.1.1 fix: load jsQR EVEN WHEN BarcodeDetector exists.
+  // IMPORTANT Stage107.7.1 fix: load jsQR EVEN WHEN BarcodeDetector exists.
   // Stage107 returned early after constructing BarcodeDetector, so a browser
   // whose native detector could not decode a frame never received a real fallback.
   const jsQrOk = await loadJsQrFallback();
@@ -1164,7 +1182,7 @@ async function ensure3D(){
   if(view3dInitPromise) return view3dInitPromise;
   view3dInitPromise=(async()=>{
     $('modelStatus').textContent='در حال بارگذاری موتور Three.js…';
-    const { MobileBuilding3D } = await import('./view3d.js?v=1076');
+    const { MobileBuilding3D } = await import('./view3d.js?v=1077');
     const instance=new MobileBuilding3D($('view3d'),{
       ...NCC_CONFIG.model, transform:NCC_CONFIG.modelRuntimeTransform, qrPoints:NCC_CONFIG.qrPoints,
       verticalOffsetM:numberOr($('modelVerticalOffset').value,0),
@@ -1218,7 +1236,7 @@ $('testRelay')?.addEventListener('click',()=>testRelayConnectivity().catch(e=>re
 $('retryRelay').onclick=()=>{clearRelayBackoff();relayNextAllowedAt=0;sendCurrentPositionNow().catch(e=>reportError('RELAY RETRY',e));};
 $('clearRelayBackoff').onclick=()=>{clearRelayBackoff();relayNextAllowedAt=0;$('relayStatus').textContent='Relay Backoff پاک شد؛ ارسال بعدی مجاز است.';$('relayStatus').className='ok';};
 $('autoPdrSend').onchange=()=>{saveProfile();updateRelayUi();if(autoPdrSendEnabled()&&pdr.active)queuePdrPublish(pdr.snapshot(),'pdr-enable',true);};
-$('relayIntervalSec').onchange=()=>{const v=Math.max(5.5,numberOr($('relayIntervalSec').value,6));$('relayIntervalSec').value=v;saveProfile();relayNextAllowedAt=Math.min(relayNextAllowedAt,Date.now()+relayIntervalMs());updateRelayUi();};
+$('relayIntervalSec').onchange=()=>{const v=Math.max(5.0,numberOr($('relayIntervalSec').value,5));$('relayIntervalSec').value=v;saveProfile();relayNextAllowedAt=Math.min(relayNextAllowedAt,Date.now()+relayIntervalMs());updateRelayUi();};
 $('enableSensors').onclick=()=>requestSensorPermission().then(()=>log('SENSORS ENABLED')).catch(e=>reportError('SENSOR',e));
 $('calibrateHeading').onclick=()=>{try{calibrateHeadingFromUi();}catch(e){reportError('HEADING CAL',e);}};
 $('clearHeadingCalibration').onclick=()=>{headingFusion.clearCalibration();updatePdrUi();$('fusionStatus').textContent='WAIT ABSOLUTE';$('fusionStatus').className='ltr';log('HEADING OVERRIDE/AUTO INIT CLEARED');};
@@ -1233,7 +1251,7 @@ $('applyQr').onclick=()=>{try{applyQrAsAnchor();}catch(e){reportError('QR APPLY'
 $('cancelQr').onclick=cancelQr;
 $('scanQrImage').onclick=()=>$('qrImageInput').click();
 $('qrImageInput').onchange=e=>{const f=e.target.files?.[0];if(f)scanQrImage(f).catch(err=>reportError('QR IMAGE',err));e.target.value='';};
-$('startPdr').onclick=async()=>{try{if(!sensorPermissionGranted)await requestSensorPermission();if(!headingFusion.calibrated)throw new Error('Heading مطلق هنوز آماده نیست. ابتدا «فعال‌کردن سنسورها» را بزنید و منتظر CAL بمانید.');pdr.setConfig(pdrConfigFromUi());pdr.setHeading(currentHeading());pdr.start();startPdrHeartbeat();updatePdrUi();setSource('pdr');if(autoPdrSendEnabled())queuePdrPublish(pdr.snapshot(),'pdr-start',true);log(`PDR STARTED · online=${autoPdrSendEnabled()?'ON':'OFF'} · interval=${(relayIntervalMs()/1000).toFixed(1)}s`);}catch(e){reportError('PDR START',e);}};
+$('startPdr').onclick=async()=>{try{if(!sensorPermissionGranted)await requestSensorPermission();if(!headingFusion.calibrated)throw new Error('Heading مطلق هنوز آماده نیست. ابتدا «فعال‌کردن سنسورها» را بزنید و منتظر CAL بمانید.');pdr.setConfig(pdrConfigFromUi());pdr.setHeading(currentHeading());pdrFirstMotionSent=false;pdr.start();startPdrHeartbeat();updatePdrUi();setSource('pdr');if(autoPdrSendEnabled())queuePdrPublish(pdr.snapshot(),'pdr-start',true);log(`PDR STARTED · online=${autoPdrSendEnabled()?'ON':'OFF'} · interval=${(relayIntervalMs()/1000).toFixed(1)}s`);}catch(e){reportError('PDR START',e);}};
 $('stopPdr').onclick=()=>{pdr.stop();stopPdrHeartbeat();updatePdrUi();if(autoPdrSendEnabled())queuePdrPublish(pdr.snapshot(),'pdr-stop',true);log('PDR STOPPED');};
 $('resetPdr').onclick=()=>pdr.resetToAnchor();
 for(const id of ['stepLength','peakThreshold','maxPeak','minStepInterval','resetThreshold']) $(id).onchange=()=>pdr.setConfig(pdrConfigFromUi());
@@ -1268,13 +1286,13 @@ async function boot(){
   updatePdrUi();
   await initViewers();
   drawAccelChart();
-  log('NCC MOBILE STAGE107.6.1 READY · QR + PDR + SAFE-RATE ONLINE RELAY + SYSTEM AVATAR');
+  log('NCC MOBILE STAGE107.7 READY · QR + PDR + SAFE-RATE ONLINE RELAY + SYSTEM AVATAR');
 }
 boot().catch(e=>reportError('BOOT',e));
 
-const __cardinalTest = projectStepCardinalSelfTest(); if(!__cardinalTest.ok) console.error('PDR CARDINAL SELF TEST FAILED',__cardinalTest); else console.info('[NCC Stage107.6.1.1] PDR cardinal convention OK: 0=N 90=E 180=S 270=W');
+const __cardinalTest = projectStepCardinalSelfTest(); if(!__cardinalTest.ok) console.error('PDR CARDINAL SELF TEST FAILED',__cardinalTest); else console.info('[NCC Stage107.7.1] PDR cardinal convention OK: 0=N 90=E 180=S 270=W');
 
-// Stage107.6.1.1 topic identity diagnostic.
+// Stage107.7.1 topic identity diagnostic.
 (() => {
   const bind = () => {
     const input = $('sessionCode');
